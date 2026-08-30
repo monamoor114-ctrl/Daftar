@@ -1,13 +1,10 @@
 {
-  "name": "دفتر - مؤسسة مازن النتشة",
+  "name": "دفتر",
   "short_name": "دفتر",
-  "start_url": "./index.html",
+  "start_url": "./",
   "display": "standalone",
-  "background_color": "#233F27",
+  "background_color": "#EDE7D8",
   "theme_color": "#233F27",
-  "orientation": "portrait",
-  "dir": "rtl",
-  "lang": "ar",
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
