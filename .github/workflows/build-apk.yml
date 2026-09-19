@@ -37,6 +37,14 @@ jobs:
           cp native-overrides/MainActivity.java android/app/src/main/java/com/natsheh/daftar/MainActivity.java
           cp native-overrides/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
 
+      - name: Apply custom app icon
+        run: |
+          for d in android/app/src/main/res/mipmap-*; do
+            cp icon-512.png "$d/ic_launcher.png" 2>/dev/null || true
+            cp icon-512.png "$d/ic_launcher_round.png" 2>/dev/null || true
+            cp icon-512.png "$d/ic_launcher_foreground.png" 2>/dev/null || true
+          done
+
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
