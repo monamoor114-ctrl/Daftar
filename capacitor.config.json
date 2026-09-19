@@ -1,0 +1,8 @@
+{
+  "appId": "com.natsheh.daftar",
+  "appName": "دفتر",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": true
+  }
+}
