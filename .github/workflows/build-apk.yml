@@ -40,6 +40,11 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
+      - name: Restore fixed debug keystore (so every build has the same signature)
+        run: |
+          mkdir -p ~/.android
+          base64 -d debug-keystore.base64.txt > ~/.android/debug.keystore
+
       - name: Build debug APK
         run: cd android && ./gradlew assembleDebug
 
