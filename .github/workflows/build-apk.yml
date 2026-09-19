@@ -39,10 +39,11 @@ jobs:
 
       - name: Apply custom app icon
         run: |
-          for d in android/app/src/main/res/mipmap-*; do
-            cp icon-512.png "$d/ic_launcher.png" 2>/dev/null || true
-            cp icon-512.png "$d/ic_launcher_round.png" 2>/dev/null || true
-            cp icon-512.png "$d/ic_launcher_foreground.png" 2>/dev/null || true
+          rm -rf android/app/src/main/res/mipmap-anydpi-v26
+          for d in android/app/src/main/res/mipmap-mdpi android/app/src/main/res/mipmap-hdpi android/app/src/main/res/mipmap-xhdpi android/app/src/main/res/mipmap-xxhdpi android/app/src/main/res/mipmap-xxxhdpi; do
+            mkdir -p "$d"
+            cp icon-512.png "$d/ic_launcher.png"
+            cp icon-512.png "$d/ic_launcher_round.png"
           done
 
       - name: Make gradlew executable
