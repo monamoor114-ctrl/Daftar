@@ -14,7 +14,8 @@
 function daftarShowErr(title, msg) {
   var el = document.getElementById("app");
   if (el && !el.dataset.rendered) {
-    el.innerHTML = '<div style="padding:20px;font-family:monospace;direction:ltr;text-align:left;white-space:pre-wrap;color:#900;background:#fff;">' + title + ':\n' + msg + '</div>';
+    var last = el.textContent || "";
+    el.innerHTML = '<div style="padding:20px;font-family:monospace;direction:ltr;text-align:left;white-space:pre-wrap;color:#900;background:#fff;">آخر نقطة وصلها: ' + last + '\n\n' + title + ':\n' + msg + '</div>';
   }
 }
 window.addEventListener("error", function (e) {
@@ -142,6 +143,7 @@ setTimeout(function () {
 <div id="flash-holder"></div>
 
 <script>
+(function(){ var el = document.getElementById("app"); if (el) el.textContent = "1: بدأ تحميل كود التطبيق الرئيسي"; })();
 /* ===================== STORAGE ===================== */
 const LS_PREFIX = "daftar_";
 function loadKey(key, fallback) {
@@ -1683,7 +1685,4 @@ function completeSale(printNow) {
   const payType = state.saleForm.payType;
   const isCheck = payType === "check";
   const paidNum = isCheck ? sumCheckRows() : (parseFloat(state.saleForm.paidNow) || 0);
-  const canSubmit = state.cart.length > 0 && (payType === "cash" ? paidNum >= total : payType === "check" ? (customerId && paidNum > 0) : customerId);
-  if (!canSubmit) return;
-
-  const sourceWarehouseId = state.editingSaleId ? nul
+  const canSubmit = state.cart.length > 0
