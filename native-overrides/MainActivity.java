@@ -4,7 +4,9 @@ import android.Manifest;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
+import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.print.PrintAttributes;
@@ -13,9 +15,14 @@ import android.print.PrintManager;
 import android.util.Base64;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
+import androidx.activity.OnBackPressedCallback;
 import androidx.core.app.ActivityCompat;
+import androidx.core.content.FileProvider;
 import com.getcapacitor.BridgeActivity;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import java.util.UUID;
 import org.json.JSONArray;
@@ -47,6 +54,41 @@ public class MainActivity extends BridgeActivity {
 
     WebView webView = getBridge().getWebView();
     webView.addJavascriptInterface(new AndroidPrintBridge(), "AndroidPrint");
+    // تصدير النسخة الاحتياطية عبر قائمة المشاركة
+    webView.addJavascriptInterface(new AndroidShareBridge(), "AndroidShare");
+
+    // زر الرجوع تبع الجوال: بيرجع خطوة داخل دفتر، وبيطلع من التطبيق بس من الشاشة الرئيسية
+    getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+      @Override
+      public void handleOnBackPressed() {
+        getBridge().getWebView().evaluateJavascript(
+          "(window.daftarHandleBack && window.daftarHandleBack()) ? 'yes' : 'no'",
+          value -> { if (!"\"yes\"".equals(value)) finish(); });
+      }
+    });
+  }
+
+  public class AndroidShareBridge {
+    @JavascriptInterface
+    public boolean shareTextFile(String fileName, String content, String mimeType) {
+      try {
+        File dir = new File(getCacheDir(), "exports");
+        if (!dir.exists()) dir.mkdirs();
+        File file = new File(dir, fileName);
+        try (FileOutputStream out = new FileOutputStream(file)) {
+          out.write(content.getBytes(StandardCharsets.UTF_8));
+        }
+        Uri uri = FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".fileprovider", file);
+        Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType(mimeType);
+        send.putExtra(Intent.EXTRA_STREAM, uri);
+        send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        runOnUiThread(() -> startActivity(Intent.createChooser(send, "حفظ أو مشاركة النسخة الاحتياطية")));
+        return true;
+      } catch (Exception e) {
+        return false;
+      }
+    }
   }
 
   public class AndroidPrintBridge {
