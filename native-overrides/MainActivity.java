@@ -33,24 +33,7 @@ public class MainActivity extends BridgeActivity {
   public void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
 
-    java.util.List<String> permsList = new java.util.ArrayList<>();
-    permsList.add(Manifest.permission.ACCESS_FINE_LOCATION);
-    permsList.add(Manifest.permission.ACCESS_COARSE_LOCATION);
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-      permsList.add(Manifest.permission.BLUETOOTH_CONNECT);
-      permsList.add(Manifest.permission.BLUETOOTH_SCAN);
-    }
-    String[] perms = permsList.toArray(new String[0]);
-    boolean needsRequest = false;
-    for (String p : perms) {
-      if (ActivityCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
-        needsRequest = true;
-        break;
-      }
-    }
-    if (needsRequest) {
-      ActivityCompat.requestPermissions(this, perms, 1001);
-    }
+    // ما بنطلب أي صلاحية عند فتح التطبيق. صلاحية البلوتوث بتنطلب بس لما المستخدم يطبع.
 
     WebView webView = getBridge().getWebView();
     webView.addJavascriptInterface(new AndroidPrintBridge(), "AndroidPrint");
@@ -91,7 +74,24 @@ public class MainActivity extends BridgeActivity {
     }
   }
 
+  private boolean btPermissionGranted() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true; // أندرويد 11 وأقل: الصلاحية بتنعطى مع التثبيت
+    return ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
+  }
+
   public class AndroidPrintBridge {
+    @JavascriptInterface
+    public boolean hasBluetoothPermission() {
+      return btPermissionGranted();
+    }
+
+    @JavascriptInterface
+    public void requestBluetoothPermission() {
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return;
+      runOnUiThread(() -> ActivityCompat.requestPermissions(MainActivity.this,
+        new String[] { Manifest.permission.BLUETOOTH_CONNECT }, 1002));
+    }
+
     @JavascriptInterface
     public void printReceipt() {
       runOnUiThread(() -> {
@@ -105,6 +105,7 @@ public class MainActivity extends BridgeActivity {
 
     @JavascriptInterface
     public String getPairedDevicesJson() {
+      if (!btPermissionGranted()) return "[]";
       try {
         BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
         if (adapter == null) return "[]";
@@ -124,6 +125,7 @@ public class MainActivity extends BridgeActivity {
 
     @JavascriptInterface
     public String printBluetoothRaw(String address, String base64Data) {
+      if (!btPermissionGranted()) return "ERROR:اسمح للتطبيق يستخدم البلوتوث وجرّب مرة ثانية";
       BluetoothSocket socket = null;
       String lastError = "";
       try {
