@@ -1,0 +1,196 @@
+package com.natsheh.daftar;
+
+import android.Manifest;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothSocket;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.print.PrintAttributes;
+import android.print.PrintDocumentAdapter;
+import android.print.PrintManager;
+import android.util.Base64;
+import android.webkit.JavascriptInterface;
+import android.webkit.WebView;
+import androidx.activity.OnBackPressedCallback;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.FileProvider;
+import com.getcapacitor.BridgeActivity;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Set;
+import java.util.UUID;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+public class MainActivity extends BridgeActivity {
+  @Override
+  public void onCreate(Bundle savedInstanceState) {
+    super.onCreate(savedInstanceState);
+
+    // ما بنطلب أي صلاحية عند فتح التطبيق. صلاحية البلوتوث بتنطلب بس لما المستخدم يطبع.
+
+    WebView webView = getBridge().getWebView();
+    webView.addJavascriptInterface(new AndroidPrintBridge(), "AndroidPrint");
+    // تصدير النسخة الاحتياطية عبر قائمة المشاركة
+    webView.addJavascriptInterface(new AndroidShareBridge(), "AndroidShare");
+
+    // زر الرجوع تبع الجوال: بيرجع خطوة داخل دفتر، وبيطلع من التطبيق بس من الشاشة الرئيسية
+    getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+      @Override
+      public void handleOnBackPressed() {
+        getBridge().getWebView().evaluateJavascript(
+          "(window.daftarHandleBack && window.daftarHandleBack()) ? 'yes' : 'no'",
+          value -> { if (!"\"yes\"".equals(value)) finish(); });
+      }
+    });
+  }
+
+  public class AndroidShareBridge {
+    @JavascriptInterface
+    public boolean shareTextFile(String fileName, String content, String mimeType) {
+      try {
+        File dir = new File(getCacheDir(), "exports");
+        if (!dir.exists()) dir.mkdirs();
+        File file = new File(dir, fileName);
+        try (FileOutputStream out = new FileOutputStream(file)) {
+          out.write(content.getBytes(StandardCharsets.UTF_8));
+        }
+        Uri uri = FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".fileprovider", file);
+        Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType(mimeType);
+        send.putExtra(Intent.EXTRA_STREAM, uri);
+        send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        runOnUiThread(() -> startActivity(Intent.createChooser(send, "حفظ أو مشاركة النسخة الاحتياطية")));
+        return true;
+      } catch (Exception e) {
+        return false;
+      }
+    }
+  }
+
+  private boolean btPermissionGranted() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true; // أندرويد 11 وأقل: الصلاحية بتنعطى مع التثبيت
+    return ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
+  }
+
+  public class AndroidPrintBridge {
+    @JavascriptInterface
+    public boolean hasBluetoothPermission() {
+      return btPermissionGranted();
+    }
+
+    @JavascriptInterface
+    public void requestBluetoothPermission() {
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return;
+      runOnUiThread(() -> ActivityCompat.requestPermissions(MainActivity.this,
+        new String[] { Manifest.permission.BLUETOOTH_CONNECT }, 1002));
+    }
+
+    @JavascriptInterface
+    public void printReceipt() {
+      runOnUiThread(() -> {
+        WebView webView = getBridge().getWebView();
+        PrintManager printManager = (PrintManager) getSystemService(PRINT_SERVICE);
+        String jobName = "فاتورة دفتر";
+        PrintDocumentAdapter adapter = webView.createPrintDocumentAdapter(jobName);
+        printManager.print(jobName, adapter, new PrintAttributes.Builder().build());
+      });
+    }
+
+    @JavascriptInterface
+    public String getPairedDevicesJson() {
+      if (!btPermissionGranted()) return "[]";
+      try {
+        BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+        if (adapter == null) return "[]";
+        Set<BluetoothDevice> devices = adapter.getBondedDevices();
+        JSONArray arr = new JSONArray();
+        for (BluetoothDevice d : devices) {
+          JSONObject o = new JSONObject();
+          o.put("name", d.getName());
+          o.put("address", d.getAddress());
+          arr.put(o);
+        }
+        return arr.toString();
+      } catch (Exception e) {
+        return "[]";
+      }
+    }
+
+    @JavascriptInterface
+    public String printBluetoothRaw(String address, String base64Data) {
+      if (!btPermissionGranted()) return "ERROR:اسمح للتطبيق يستخدم البلوتوث وجرّب مرة ثانية";
+      BluetoothSocket socket = null;
+      String lastError = "";
+      try {
+        byte[] data = Base64.decode(base64Data, Base64.DEFAULT);
+        BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+        if (adapter == null) return "ERROR:بلوتوث غير متوفر على الجهاز";
+        try { adapter.cancelDiscovery(); } catch (Exception ignored) {}
+        BluetoothDevice device = adapter.getRemoteDevice(address);
+
+        // Try 1: INSECURE RFCOMM via standard UUID — this is what the known-working
+        // Gprinter SDK uses, and is very likely the missing piece for this printer.
+        try {
+          UUID sppUuid = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb");
+          socket = device.createInsecureRfcommSocketToServiceRecord(sppUuid);
+          socket.connect();
+        } catch (Exception e0) {
+          lastError = "insecure: " + (e0.getMessage() == null ? e0.toString() : e0.getMessage());
+          socket = null;
+        }
+
+        // Try 2: fixed RFCOMM channel 1 via reflection (works for most clone ESC/POS printers
+        // whose SDP records don't resolve correctly through the standard UUID lookup).
+        if (socket == null) {
+          try {
+            java.lang.reflect.Method m = device.getClass().getMethod("createRfcommSocket", int.class);
+            socket = (BluetoothSocket) m.invoke(device, 1);
+            socket.connect();
+          } catch (Exception e1) {
+            lastError += " | channel1: " + (e1.getMessage() == null ? e1.toString() : e1.getMessage());
+            socket = null;
+          }
+        }
+
+        // Try 3: standard SECURE SDP UUID lookup, as last resort.
+        if (socket == null) {
+          try {
+            UUID sppUuid = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb");
+            socket = device.createRfcommSocketToServiceRecord(sppUuid);
+            socket.connect();
+          } catch (Exception e2) {
+            lastError += " | uuid: " + (e2.getMessage() == null ? e2.toString() : e2.getMessage());
+            socket = null;
+          }
+        }
+
+        if (socket == null) return "ERROR:" + lastError;
+
+        try { Thread.sleep(300); } catch (InterruptedException ignored) {}
+        OutputStream os = socket.getOutputStream();
+        int chunkSize = 256;
+        for (int i = 0; i < data.length; i += chunkSize) {
+          int end = Math.min(data.length, i + chunkSize);
+          os.write(data, i, end - i);
+          os.flush();
+          try { Thread.sleep(15); } catch (InterruptedException ignored) {}
+        }
+        try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+        return "OK";
+      } catch (Exception e) {
+        return "ERROR:" + (e.getMessage() == null ? e.toString() : e.getMessage());
+      } finally {
+        if (socket != null) {
+          try { socket.close(); } catch (Exception ignored) {}
+        }
+      }
+    }
+  }
+}
