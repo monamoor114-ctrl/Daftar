@@ -4271,10 +4271,10 @@ function printPartyStatement(kind, partyId) {
     scoped("sales").filter((s) => s.customerId === custParty.id).forEach((t) => {
       rows.push({
         ts: t.ts, amount: t.total,
-        label: `بيع #${shortId(t.id)}: ` + t.items.map((it) => `${esc(it.name)} ${fmt(it.qty)}×${fmt(it.price)}`).join("، "),
+        label: `فاتورة بيع <bdi>#${shortId(t.id)}</bdi>` + (t.quick && t.invoiceNo ? ` (ورقية <bdi>${esc(t.invoiceNo)}</bdi>)` : ""),
       });
       // المبلغ اللي انقبض مع الفاتورة نفسها (نقدي) لازم ينطرح، وإلا الكشف بيطلع أعلى من الرصيد الحقيقي
-      if (Number(t.paidNow)) rows.push({ ts: new Date(new Date(t.ts).getTime() + 1).toISOString(), amount: -Number(t.paidNow), label: `مدفوع مع الفاتورة #${shortId(t.id)}` });
+      if (Number(t.paidNow)) rows.push({ ts: new Date(new Date(t.ts).getTime() + 1).toISOString(), amount: -Number(t.paidNow), label: `دفعة مع الفاتورة <bdi>#${shortId(t.id)}</bdi>` });
     });
     scoped("vouchers").filter((v) => v.partyKind === "customer" && v.partyId === custParty.id).forEach((v) => rows.push({
       ts: v.ts, amount: -v.amount, label: (v.desc || "تحصيل") + (v.method === "check" ? " (شيك)" : ""),
@@ -4284,9 +4284,9 @@ function printPartyStatement(kind, partyId) {
     scoped("purchases").filter((p) => p.supplierId === supParty.id).forEach((t) => {
       rows.push({
         ts: t.ts, amount: -t.total,
-        label: `شراء #${shortId(t.id)}: ` + t.items.map((it) => `${esc(it.name)} ${fmt(it.qty)}×${fmt(it.cost)}`).join("، "),
+        label: `فاتورة شراء <bdi>#${shortId(t.id)}</bdi>` + (t.quick && t.invoiceNo ? ` (ورقية <bdi>${esc(t.invoiceNo)}</bdi>)` : ""),
       });
-      if (Number(t.paidNow)) rows.push({ ts: new Date(new Date(t.ts).getTime() + 1).toISOString(), amount: Number(t.paidNow), label: `مدفوع مع فاتورة الشراء #${shortId(t.id)}` });
+      if (Number(t.paidNow)) rows.push({ ts: new Date(new Date(t.ts).getTime() + 1).toISOString(), amount: Number(t.paidNow), label: `دفعة مع فاتورة الشراء <bdi>#${shortId(t.id)}</bdi>` });
     });
     scoped("vouchers").filter((v) => v.partyKind === "supplier" && v.partyId === supParty.id).forEach((v) => rows.push({
       ts: v.ts, amount: v.amount, label: (v.desc || "دفع") + (v.method === "check" ? " (شيك)" : ""),
@@ -4299,8 +4299,8 @@ function printPartyStatement(kind, partyId) {
   const rowsHtml = rows.map((r) => {
     running += r.amount;
     return `<tr style="border-bottom:1px dotted #ccc;">
-      <td style="text-align:right;padding:4px 0;white-space:nowrap;">${fmtDate(r.ts)}</td>
-      <td style="text-align:right;font-size:10.5px;">${r.label}</td>
+      <td style="text-align:right;padding:8px 4px 8px 0;white-space:nowrap;vertical-align:top;">${fmtDate(r.ts)}</td>
+      <td style="text-align:right;padding:8px 0;line-height:1.5;">${r.label}</td>
       <td style="text-align:center;white-space:nowrap;">${r.amount >= 0 ? fmt(r.amount) : "(" + fmt(Math.abs(r.amount)) + ")"}</td>
       <td style="text-align:center;white-space:nowrap;font-weight:600;">${fmt(running)}</td>
     </tr>`;
@@ -4308,9 +4308,9 @@ function printPartyStatement(kind, partyId) {
   const html = `${printHead(settings)}
     <div style="text-align:center;font-weight:700;font-size:13px;margin-bottom:4px;">كشف حساب${otherParty ? " موحّد (مبيعات + مشتريات)" : ""}: ${esc(party.name)}</div>
     ${party.phone ? `<div style="text-align:center;font-size:11px;color:#666;margin-bottom:10px;">${esc(party.phone)}</div>` : ""}
-    <table style="width:100%;font-size:11px;border-collapse:collapse;margin-bottom:10px;"><thead><tr style="border-bottom:1px solid #999;"><th style="text-align:right;">التاريخ</th><th style="text-align:right;">البيان</th><th>المبلغ</th><th>الرصيد</th></tr></thead>
+    <table style="width:100%;font-size:12.5px;border-collapse:collapse;margin-bottom:10px;"><thead><tr style="border-bottom:1px solid #999;"><th style="text-align:right;padding-bottom:6px;">التاريخ</th><th style="text-align:right;padding-bottom:6px;">البيان</th><th style="padding-bottom:6px;">المبلغ</th><th style="padding-bottom:6px;">الرصيد</th></tr></thead>
     <tbody>
-      <tr style="border-bottom:1px dotted #ccc;color:#666;"><td style="padding:4px 0;">—</td><td style="text-align:right;">رصيد افتتاحي${otherParty ? " صافي" : ""}</td><td style="text-align:center;">—</td><td style="text-align:center;font-weight:600;">${fmt(openingNet)}</td></tr>
+      <tr style="border-bottom:1px dotted #ccc;color:#666;"><td style="padding:8px 0;">—</td><td style="text-align:right;">رصيد افتتاحي${otherParty ? " صافي" : ""}</td><td style="text-align:center;">—</td><td style="text-align:center;font-weight:600;">${fmt(openingNet)}</td></tr>
       ${rowsHtml}
     </tbody></table>
     <div style="display:flex;justify-content:space-between;font-weight:700;font-size:14px;border-top:1px dashed #999;padding-top:6px;"><span>الرصيد الحالي${otherParty ? " (الصافي)" : ""}</span><span>${fmt(Math.abs(running))} ${esc(settings.currency)} ${running >= 0 ? "عليه" : "له"}</span></div>`;
