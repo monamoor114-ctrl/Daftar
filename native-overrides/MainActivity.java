@@ -72,6 +72,30 @@ public class MainActivity extends BridgeActivity {
         return false;
       }
     }
+
+    // تنزيل صورة قديمة من السحابة وإرجاعها كـ base64 (عشان ننقلها للجهاز بدون مشاكل CORS)
+    @JavascriptInterface
+    public String downloadBase64(String url) {
+      java.net.HttpURLConnection conn = null;
+      try {
+        conn = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+        conn.setConnectTimeout(20000);
+        conn.setReadTimeout(30000);
+        int code = conn.getResponseCode();
+        if (code < 200 || code >= 300) return "";
+        try (java.io.InputStream in = conn.getInputStream();
+             java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream()) {
+          byte[] chunk = new byte[16384];
+          int n;
+          while ((n = in.read(chunk)) != -1) buf.write(chunk, 0, n);
+          return Base64.encodeToString(buf.toByteArray(), Base64.NO_WRAP);
+        }
+      } catch (Exception e) {
+        return "";
+      } finally {
+        if (conn != null) conn.disconnect();
+      }
+    }
   }
 
   private boolean btPermissionGranted() {
