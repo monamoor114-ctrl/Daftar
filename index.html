@@ -1022,6 +1022,7 @@ function loadKey(key, fallback) {
 }
 function saveKey(key, value) {
   if (REP_MODE && !repApplying && REP_TRACK_KEYS.includes(key)) { try { repRecordDiff(key, value); } catch (e) { console.error("rep diff failed", e); } }
+  if (!REP_MODE && Array.isArray(value) && SYNC_KEYS_SET.has(key)) { try { syncStampRecords(key, value); } catch (e) { console.error("sync stamp failed", e); } }
   try {
     localStorage.setItem(LS_PREFIX + key, JSON.stringify(value));
   } catch (e) {
@@ -1178,7 +1179,102 @@ function cloudGetLinkId() { return loadKey("cloudLinkId", null); }
 function cloudSetLinkId(id) { try { localStorage.setItem(LS_PREFIX + "cloudLinkId", JSON.stringify(id)); } catch (e) {} }
 function cloudIsEnabled() { return !!cloudGetLinkId(); }
 
-const ACCOUNT_SCOPED_KEYS = ["products", "suppliers", "customers", "purchases", "sales", "expenses", "vouchers", "manualCash", "checks", "capital", "warehouses", "warehouseEntries", "employees", "employeeTx", "damagedGoods"];
+const ACCOUNT_SCOPED_KEYS = ["products", "suppliers", "customers", "purchases", "sales", "expenses", "vouchers", "manualCash", "checks", "capital", "warehouses", "warehouseEntries", "employees", "employeeTx", "damagedGoods", "issuedChecks"];
+/* ===================== مزامنة بالدمج (كل سجل لحاله) =====================
+   كل سجل إله وقت آخر تعديل (_m). الحذف بينحفظ كـ "علامة حذف" (tombstone).
+   لما توصل نسخة من السحابة أو قبل ما نرفع، بندمج: الأحدث بيربح، وما في جهاز بيمسح شغل جهاز ثاني. */
+var SYNC_KEYS_SET = new Set(["products", "suppliers", "customers", "purchases", "sales", "expenses", "vouchers", "manualCash", "checks", "capital", "warehouses", "warehouseEntries", "employees", "employeeTx", "damagedGoods", "issuedChecks"]);
+const TOMB_KEEP_MS = 120 * 864e5;
+function syncRecJson(x) { const r = { ...x }; delete r._m; return JSON.stringify(r); }
+function syncLoadTombs() { try { return JSON.parse(localStorage.getItem(LS_PREFIX + "syncTombs") || "{}") || {}; } catch (e) { return {}; } }
+function syncSaveTombs(t) {
+  const lim = Date.now() - TOMB_KEEP_MS;
+  Object.keys(t).forEach((k) => { if (!t[k] || t[k].at < lim) delete t[k]; });
+  try { localStorage.setItem(LS_PREFIX + "syncTombs", JSON.stringify(t)); } catch (e) {}
+}
+function syncStampRecords(key, next) {
+  let prev = [];
+  try { prev = JSON.parse(localStorage.getItem(LS_PREFIX + key) || "[]") || []; } catch (e) {}
+  const prevMap = new Map();
+  prev.forEach((x) => { if (x && x.id) prevMap.set(x.id, x); });
+  const now = Date.now();
+  const nextIds = new Set();
+  next.forEach((x) => {
+    if (!x || !x.id) return;
+    nextIds.add(x.id);
+    const p = prevMap.get(x.id);
+    if (!p) { if (!x._m) x._m = now; }
+    else if (syncRecJson(p) !== syncRecJson(x)) x._m = now;
+    else if (p._m && !x._m) x._m = p._m;
+  });
+  let tombs = null;
+  prev.forEach((p) => {
+    if (p && p.id && !nextIds.has(p.id)) { tombs = tombs || syncLoadTombs(); tombs[key + "|" + p.id] = { at: now, acc: p.accountId || null }; }
+  });
+  if (tombs) syncSaveTombs(tombs);
+}
+// بيدمج نسخة السحابة مع اللي على الجهاز لحساب واحد. بيرجّع إذا السحابة ناقصها إشي من الجهاز (لازم نرفع)
+function syncMergeAccount(accountId, cloud, preferLocalOnTie) {
+  const localTombs = syncLoadTombs();
+  const cloudTombs = (cloud && cloud._tombs) || {};
+  let needPush = false;
+  Object.keys(cloudTombs).forEach((k) => {
+    const at = Number(cloudTombs[k]) || 0;
+    if (!localTombs[k] || localTombs[k].at < at) localTombs[k] = { at, acc: accountId };
+  });
+  Object.keys(localTombs).forEach((k) => { if (localTombs[k].acc === accountId && !(Number(cloudTombs[k]) >= localTombs[k].at)) needPush = true; });
+  ACCOUNT_SCOPED_KEYS.forEach((k) => {
+    const all = loadKey(k, []) || [];
+    const others = all.filter((x) => x.accountId !== accountId);
+    const mine = all.filter((x) => x.accountId === accountId);
+    const cl = (cloud && cloud[k]) || [];
+    const cmap = new Map(cl.filter((x) => x && x.id).map((x) => [x.id, x]));
+    const lmap = new Map(mine.filter((x) => x && x.id).map((x) => [x.id, x]));
+    const out = [];
+    const tombAt = (id) => { const t = localTombs[k + "|" + id]; return t ? t.at : 0; };
+    const decide = (l, c) => {
+      let pick;
+      if (l && c) {
+        const lm = Number(l._m) || 0, cm = Number(c._m) || 0;
+        pick = cm > lm ? c : lm > cm ? l : (preferLocalOnTie ? l : c);
+      } else pick = l || c;
+      const t = tombAt(pick.id);
+      if (t && t >= (Number(pick._m) || 0)) return null;
+      return pick;
+    };
+    // السجلات الجديدة من السحابة بتنحط أول (عادة هي الأحدث)
+    cl.forEach((c) => { if (c && c.id && !lmap.has(c.id)) { const p = decide(null, c); if (p) out.push({ ...p, accountId }); } });
+    mine.forEach((l) => {
+      if (!l || !l.id) { out.push(l); return; }
+      const c = cmap.get(l.id);
+      const p = decide(l, c);
+      if (!p) return;
+      if (!c || syncRecJson({ ...p, accountId: undefined }) !== syncRecJson({ ...c, accountId: undefined }) || (Number(p._m) || 0) !== (Number(c._m) || 0)) needPush = true;
+      out.push({ ...p, accountId });
+    });
+    // سجل بالسحابة انحذف عندنا → لازم نرفع عشان ينحذف هناك
+    cl.forEach((c) => { if (c && c.id) { const t = tombAt(c.id); if (t && t >= (Number(c._m) || 0)) needPush = true; } });
+    localStorage.setItem(LS_PREFIX + k, JSON.stringify([...others, ...out]));
+  });
+  syncSaveTombs(localTombs);
+  // الإعدادات والمندوبين: دمج بسيط
+  const settingsMap = loadKey("settingsMap", {}) || {};
+  if (cloud && cloud.settings && !(preferLocalOnTie && settingsMap[accountId])) settingsMap[accountId] = cloud.settings;
+  localStorage.setItem(LS_PREFIX + "settingsMap", JSON.stringify(settingsMap));
+  const repsAll = loadKey("reps", []) || [];
+  const repMap = new Map(repsAll.filter((r) => r.accountId === accountId).map((r) => [r.id, r]));
+  ((cloud && cloud.reps) || []).forEach((r) => { if (!repMap.has(r.id) || !preferLocalOnTie) repMap.set(r.id, r); });
+  const repTomb = (id) => tombAtGlobal(localTombs, "reps|" + id);
+  const repsMine = [...repMap.values()].filter((r) => !repTomb(r.id));
+  localStorage.setItem(LS_PREFIX + "reps", JSON.stringify([...repsAll.filter((r) => r.accountId !== accountId), ...repsMine]));
+  const myRepIds = new Set(repsMine.map((r) => r.id));
+  const hAll = loadKey("cashHandovers", []) || [];
+  const hMap = new Map(hAll.filter((h) => myRepIds.has(h.repId)).map((h) => [h.id, h]));
+  ((cloud && cloud.cashHandovers) || []).forEach((h) => { const l = hMap.get(h.id); if (!l || (l.status === "pending" && h.status !== "pending")) hMap.set(h.id, h); });
+  localStorage.setItem(LS_PREFIX + "cashHandovers", JSON.stringify([...hAll.filter((h) => !myRepIds.has(h.repId)), ...hMap.values()]));
+  return needPush;
+}
+function tombAtGlobal(t, k) { return t[k] ? t[k].at : 0; }
 function cloudSnapshotRoot() {
   return { accounts: loadKey("accounts", []), cloudOwnerPin: loadKey("cloudOwnerPin", null), _updatedAt: Date.now() };
 }
@@ -1190,6 +1286,9 @@ function cloudSnapshotAccount(accountId) {
   snap.reps = (loadKey("reps", []) || []).filter((r) => r.accountId === accountId);
   const myRepIds = new Set(snap.reps.map((r) => r.id));
   snap.cashHandovers = (loadKey("cashHandovers", []) || []).filter((h) => myRepIds.has(h.repId));
+  const tombs = syncLoadTombs(); const tt = {};
+  Object.keys(tombs).forEach((k) => { if (tombs[k].acc === accountId) tt[k] = tombs[k].at; });
+  snap._tombs = tt;
   snap._updatedAt = Date.now();
   return snap;
 }
@@ -1240,11 +1339,20 @@ function cloudPushNow() {
   const accountRef = rootRef.collection("data").doc(accId);
   cloudPushInFlight = true;
   updateSyncBadge();
-  Promise.all([
-    rootRef.set(cloudSnapshotRoot(), { merge: false }),
-    accountRef.set(cloudSnapshotAccount(accId), { merge: false }),
-  ])
+  let mergedSomething = false;
+  db.runTransaction(async (tx) => {
+    const [rd, ad] = [await tx.get(rootRef), await tx.get(accountRef)];
+    // قبل ما نرفع: بندمج اللي بالسحابة (ممكن جهاز ثاني ضاف إشي) عشان ما نمسحه
+    cloudApplyingRemote = true;
+    try {
+      if (rd.exists) mergedSomething = syncMergeRoot(rd.data()) || mergedSomething;
+      if (ad.exists) { syncMergeAccount(accId, ad.data(), true); mergedSomething = true; }
+    } finally { cloudApplyingRemote = false; }
+    tx.set(rootRef, cloudSnapshotRoot());
+    tx.set(accountRef, cloudSnapshotAccount(accId));
+  })
     .then(() => {
+      if (mergedSomething) { bootDB(); render(); }
       cloudPushFailed = false;
       try { scheduleRepPublish(); } catch (e) {}
       // امسح علامة "لسه ما انرفع" بس إذا ما صار تعديل جديد أثناء الرفع
@@ -1301,17 +1409,31 @@ function protectRecentlyAdded(key, item) {
   recentlyAddedGuard.push({ key, id: item.id, item, ts: Date.now() });
   recentlyAddedGuard = recentlyAddedGuard.filter((r) => Date.now() - r.ts < RECENT_GUARD_MS);
 }
+// دمج قائمة الحسابات (ما بنمسح حساب موجود عند أي طرف)
+function syncMergeRoot(data) {
+  const local = loadKey("accounts", []) || [];
+  const map = new Map(local.map((a) => [a.id, a]));
+  let changed = false;
+  (data.accounts || []).forEach((a) => { const l = map.get(a.id); if (!l) { map.set(a.id, a); changed = true; } else if (JSON.stringify(l) !== JSON.stringify(a) && !(data._updatedAt && data._updatedAt < localLastModifiedAt)) { map.set(a.id, a); changed = true; } });
+  if (changed) localStorage.setItem(LS_PREFIX + "accounts", JSON.stringify([...map.values()]));
+  if (data.cloudOwnerPin !== undefined && !loadKey("cloudOwnerPin", null)) localStorage.setItem(LS_PREFIX + "cloudOwnerPin", JSON.stringify(data.cloudOwnerPin));
+  return changed;
+}
+let cloudReplaceMode = false; // لما الجهاز ينربط بشركة ثانية: بنستبدل مش بندمج
 function cloudApplySnapshot(kind, accountId, data) {
   if (!data || cloudRescueHold) return;
-  // لو الجهاز عنده تعديل محلي أحدث من نسخة السحابة دي، تجاهلها عشان ما تمسحش التعديل الحديث
-  if (data._updatedAt && data._updatedAt < localLastModifiedAt) return;
   // لو المستخدم لسه بيبني فاتورة (سلة فيها أصناف) أو واقف في نافذة إدخال بيانات، أجّل التحديث عشان ما نقطعش شغله
   const cartBusy = (state.cart && state.cart.length > 0) || (state.pcart && state.pcart.length > 0);
   const modalBusy = state.modal && ["saleCart", "purchaseCart", "repCollect", "repHandover"].includes(state.modal.type);
   if (cartBusy || modalBusy) { pendingCloudSnapshots.push({ kind, accountId, data }); return; }
   cloudApplyingRemote = true;
   try {
-    if (kind === "root") {
+    let needPush = false;
+    if (kind === "root" && !cloudReplaceMode) {
+      syncMergeRoot(data);
+    } else if (kind === "account" && !cloudReplaceMode) {
+      needPush = syncMergeAccount(accountId, data, cloudHasUnsynced(accountId));
+    } else if (kind === "root") {
       if (data.accounts !== undefined) localStorage.setItem(LS_PREFIX + "accounts", JSON.stringify(data.accounts));
       if (data.cloudOwnerPin !== undefined) localStorage.setItem(LS_PREFIX + "cloudOwnerPin", JSON.stringify(data.cloudOwnerPin));
     } else {
@@ -1336,7 +1458,7 @@ function cloudApplySnapshot(kind, accountId, data) {
     // حماية إضافية: أي سجل حديث (آخر 45 ثانية) لازم يفضل موجود حتى لو النسخة الجديدة مش فيها
     recentlyAddedGuard = recentlyAddedGuard.filter((r) => Date.now() - r.ts < RECENT_GUARD_MS);
     let restoredAny = false;
-    recentlyAddedGuard.forEach((r) => {
+    if (cloudReplaceMode) recentlyAddedGuard.forEach((r) => {
       const arr = loadKey(r.key, []) || [];
       if (!arr.some((x) => x.id === r.id)) {
         arr.unshift(r.item);
@@ -1345,7 +1467,7 @@ function cloudApplySnapshot(kind, accountId, data) {
       }
     });
     bootDB();
-    if (restoredAny) cloudScheduleSync();
+    if (restoredAny || needPush) setTimeout(() => { cloudMarkDirty(accountId || state.activeAccountId, Date.now()); cloudScheduleSync(); }, 0);
     render();
   } finally {
     cloudApplyingRemote = false;
@@ -1636,14 +1758,18 @@ async function cloudPullCompany(linkId) {
   cloudSetLinkId(linkId);
   cloudSetDirty({});
   localLastModifiedAt = 0;
-  if (doc.exists) {
-    const rootData = doc.data();
-    cloudApplySnapshot("root", null, rootData);
-    for (const acc of (rootData.accounts || [])) {
-      const accDoc = await rootRef.collection("data").doc(acc.id).get();
-      if (accDoc.exists) cloudApplySnapshot("account", acc.id, accDoc.data());
+  try { localStorage.removeItem(LS_PREFIX + "syncTombs"); } catch (e) {}
+  cloudReplaceMode = true;
+  try {
+    if (doc.exists) {
+      const rootData = doc.data();
+      cloudApplySnapshot("root", null, rootData);
+      for (const acc of (rootData.accounts || [])) {
+        const accDoc = await rootRef.collection("data").doc(acc.id).get();
+        if (accDoc.exists) cloudApplySnapshot("account", acc.id, accDoc.data());
+      }
     }
-  }
+  } finally { cloudReplaceMode = false; }
   cloudStartListening();
   state.activeAccountId = null; state.screen = "home";
   flash("✅ تم تنزيل بياناتك");
@@ -1879,11 +2005,12 @@ function bootDB() {
     DB.warehouseEntries = loadKey("warehouseEntries", []);
     DB.damagedGoods = loadKey("damagedGoods", []);
   }
+  DB.issuedChecks = loadKey("issuedChecks", []) || [];
 }
 function persist(key) { return saveKey(key, DB[key]); }
 
 /* ===================== BACKUP / RESTORE ===================== */
-const BACKUP_KEYS = ["accounts", "products", "suppliers", "customers", "purchases", "sales", "expenses", "vouchers", "manualCash", "checks", "capital", "warehouses", "warehouseEntries", "employees", "employeeTx", "settingsMap", "reps", "cashHandovers", "cloudOwnerPin", "damagedGoods"];
+const BACKUP_KEYS = ["accounts", "products", "suppliers", "customers", "purchases", "sales", "expenses", "vouchers", "manualCash", "checks", "capital", "warehouses", "warehouseEntries", "employees", "employeeTx", "settingsMap", "reps", "cashHandovers", "cloudOwnerPin", "damagedGoods", "issuedChecks"];
 function exportBackup() {
   const payload = { app: "daftar", version: 1, exportedAt: new Date().toISOString() };
   BACKUP_KEYS.forEach((k) => { payload[k] = DB[k]; });
@@ -2037,8 +2164,10 @@ function cashLedger() {
   }
   if (settings.autoPurchases) {
     scoped("purchases").forEach((p) => { if (p.paidNow > 0) entries.push({ id: "p" + p.id, ts: p.ts, type: "out", amount: p.paidNow, desc: `مشتريات فاتورة ${docNo(p, "purchases")}`, source: "purchase" }); });
-    scoped("vouchers").filter((v) => v.partyKind === "supplier" && v.method !== "check").forEach((v) => entries.push({ id: "v" + v.id, ts: v.ts, type: "out", amount: v.amount, desc: `دفع: ${v.partyName}`, source: "payment" }));
+    scoped("vouchers").filter((v) => v.partyKind === "supplier" && v.method !== "check" && v.method !== "owncheck").forEach((v) => entries.push({ id: "v" + v.id, ts: v.ts, type: "out", amount: v.amount, desc: `دفع: ${v.partyName}`, source: "payment" }));
   }
+  // الشيكات الصادرة بتنخصم من الصندوق بس لما تنصرف
+  scoped("issuedChecks").filter((c) => c.status === "cleared").forEach((c) => entries.push({ id: "ic" + c.id, ts: c.clearedAt || c.dueDate || c.ts, type: "out", amount: c.amount, desc: `صرف شيك صادر${c.checkNo ? " رقم " + c.checkNo : ""} لـ ${c.partyName || ""}`, source: "issuedCheck" }));
   if (settings.autoExpenses) {
     scoped("expenses").filter((e) => e.method === "cashbox").forEach((e) => entries.push({ id: "e" + e.id, ts: e.ts, type: "out", amount: e.amount, desc: `مصروف: ${e.account}`, source: "expense" }));
   }
@@ -2302,7 +2431,7 @@ function renderRepDashboard() {
   const perms = repPermissions(rep);
   return `<div style="min-height:100vh;background:var(--paper);padding-bottom:80px;">
     <div style="background:var(--greenDark);color:#fff;padding:16px;display:flex;justify-content:space-between;align-items:center;">
-      <div><div style="font-weight:700;font-size:15px;">👷 ${esc(rep.name)}</div><div style="font-size:11px;opacity:0.8;">${isMain ? "🏪 المحل الرئيسي" : "🚚 مستودع خاص"}</div></div>
+      <div><div style="font-weight:700;font-size:15px;">👷 ${esc(rep.name)}</div><div style="font-size:11px;opacity:0.8;">${isMain ? "🏪 المحل الرئيسي" : "🚚 " + esc(((scoped("warehouses").find((w) => w.id === rep.warehouseId)) || {}).name || "مستودع خاص")}</div></div>
       <div style="display:flex;gap:6px;align-items:center;">${REP_MODE ? langToggleHtml(true) : ""}<button class="icon-btn" style="color:#fff;" onclick="repLogout()">خروج ↩</button></div>
     </div>
     <div style="padding:14px;">
@@ -2670,6 +2799,10 @@ function renderHome() {
       <div class="stat-card"><div class="stat-label"><span>رصيد الصندوق</span><span>💵</span></div><div class="stat-value" style="color:${cb < 0 ? "var(--stamp)" : "var(--green)"}">${fmt(cb)} ${esc(settings.currency)}</div></div>
       <div class="stat-card"><div class="stat-label"><span>تنبيه مخزون</span><span>⚠️</span></div><div class="stat-value" style="color:${lowStock ? "var(--stamp)" : "var(--inkSoft)"}">${lowStock}</div></div>
     </div>
+    ${(() => { const due = issuedDueSoon(); if (!due.length) return ""; const sum = due.reduce((a, c) => a + c.amount, 0);
+      return `<div class="card" style="padding:12px 14px;margin-bottom:14px;border:1.5px solid var(--stamp);background:var(--stampLight);cursor:pointer;" onclick="goScreen('cashbox')">
+        <div class="row-title" style="color:var(--stamp);">⚠️ شيكات صادرة مستحقة خلال أسبوع: ${due.length}</div>
+        <div class="row-sub">المجموع ${fmt(sum)} ${esc(settings.currency)} — تأكد إنه في رصيد بالبنك. اكبس للتفاصيل.</div></div>`; })()}
     <div class="tiles">${tiles.map(([id, icon, label, color]) => `
       <div class="tile" onclick="goScreen('${id}')">
         <div class="circle" style="background:${color}22;">${icon}</div>
@@ -2695,15 +2828,26 @@ function normName(t) { return String(t || "").trim().toLowerCase().replace(/[أ�
 function suggestFieldHtml(fieldId, options, selectedId, label, placeholder, onResolve, addKind) {
   const selected = options.find((c) => c.id === selectedId);
   SUGGEST[fieldId] = { names: options.map((o) => o.name), onResolve, addKind };
+  const typedNew = !selected ? (fieldId === "purchase-supplier" ? (state.purchaseForm || {})._typed : fieldId === "sale-customer" ? (state.saleForm || {})._typed : "") || "" : "";
   return `<label class="field" style="margin-bottom:${selected ? 10 : 4}px;"><span class="lbl">${esc(label)}</span>
-    <input id="${fieldId}" value="${esc(selected ? selected.name : "")}" placeholder="${esc(placeholder || "اكتب اسم أو اختار من القائمة...")}" autocomplete="off" autocorrect="off" spellcheck="false"
+    <input id="${fieldId}" value="${esc(selected ? selected.name : typedNew)}" placeholder="${esc(placeholder || "اكتب اسم أو اختار من القائمة...")}" autocomplete="off" autocorrect="off" spellcheck="false"
       oninput="suggestUpdate('${fieldId}')" onfocus="suggestUpdate('${fieldId}')" onblur="setTimeout(() => suggestBlur('${fieldId}'), 150)" />
   </label>
+  ${typedNew && (fieldId === "purchase-supplier" ? (state.purchaseForm || {})._typedFinal : (state.saleForm || {})._typedFinal) && (fieldId !== "sale-customer" || repCanAddCustomer()) ? `<div class="row-sub" style="margin:-2px 0 8px;color:var(--gold);">«${esc(typedNew)}» اسم جديد — رح ينضاف لحاله لما تحفظ الفاتورة</div>` : ""}
   <div id="${fieldId}-sug" class="card" style="display:none;margin:0 0 10px;padding:4px 0;max-height:240px;overflow-y:auto;"></div>`;
 }
 function suggestUpdate(fieldId) {
   const cfg = SUGGEST[fieldId]; const el = document.getElementById(fieldId); const box = document.getElementById(fieldId + "-sug");
   if (!cfg || !el || !box) return;
+  // نحفظ المكتوب أول بأول عشان أي تحديث للشاشة ما يمسحه
+  if (fieldId === "purchase-supplier" || fieldId === "sale-customer") {
+    const isSup = fieldId === "purchase-supplier";
+    const f = isSup ? state.purchaseForm : state.saleForm; const k = isSup ? "supplierId" : "customerId";
+    if (f) {
+      if (f[k]) { const cur = (isSup ? purchasePartyOptions() : scoped("customers")).find((o) => o.id === f[k]); if (!cur || normName(cur.name) !== normName(el.value)) f[k] = ""; }
+      if (!f[k]) { f._typed = el.value; f._typedFinal = false; }
+    }
+  }
   const q = normName(el.value);
   let list = cfg.names;
   if (q) list = list.filter((n) => normName(n).includes(q)).sort((a, b) => (normName(a).startsWith(q) ? 0 : 1) - (normName(b).startsWith(q) ? 0 : 1));
@@ -2745,6 +2889,28 @@ function suggestAddNew(fieldId) {
   flash("تمت إضافة المورد واختياره للفاتورة");
   render();
 }
+// قبل الحفظ: بنقرأ اسم المورد/العميل المكتوب مباشرة (حتى لو ما اختاره من القائمة)، وإذا اسم جديد بنضيفه لحاله
+function syncPartyField(fieldId) {
+  const el = document.getElementById(fieldId);
+  if (!el) return true;
+  const typed = (el.value || "").trim();
+  const isSup = fieldId === "purchase-supplier";
+  if (!typed) return true;
+  const opts = isSup ? purchasePartyOptions() : scoped("customers");
+  const m = opts.find((o) => normName(o.name) === normName(typed));
+  if (m) { if (isSup) state.purchaseForm.supplierId = m.id; else state.saleForm.customerId = m.id; return true; }
+  if (isSup) {
+    const ns = { id: uid(), name: typed, phone: "", opening: 0, notes: "" };
+    addScoped("suppliers", ns); state.purchaseForm.supplierId = ns.id;
+    flash("➕ انضاف مورد جديد: " + typed);
+    return true;
+  }
+  if (!repCanAddCustomer()) return typed;
+  const nc = { id: uid(), name: typed, phone: "", opening: 0, notes: "" };
+  addScoped("customers", nc); state.saleForm.customerId = nc.id;
+  flash("➕ انضاف عميل جديد: " + typed);
+  return true;
+}
 function resolveWhProduct(fieldId) { const el = document.getElementById(fieldId); state._whProductQuery = el ? el.value : ""; render(); }
 function partyDatalistFieldHtml(fieldId, options, selectedId, label, placeholder, onResolve) {
   return suggestFieldHtml(fieldId, options, selectedId, label, placeholder, onResolve, "supplier");
@@ -2752,9 +2918,10 @@ function partyDatalistFieldHtml(fieldId, options, selectedId, label, placeholder
 function resolveDatalistPurchaseSupplier(fieldId) {
   const el = document.getElementById(fieldId);
   const typed = (el.value || "").trim();
-  if (!typed) { state.purchaseForm.supplierId = ""; render(); return; }
+  if (!typed) { state.purchaseForm.supplierId = ""; state.purchaseForm._typed = ""; render(); return; }
   const match = purchasePartyOptions().find((c) => normName(c.name) === normName(typed));
   state.purchaseForm.supplierId = match ? match.id : "";
+  state.purchaseForm._typed = match ? "" : typed; state.purchaseForm._typedFinal = !match;
   render();
 }
 function customerDatalistFieldHtml(fieldId, customers, selectedId, label, placeholder) {
@@ -2763,9 +2930,10 @@ function customerDatalistFieldHtml(fieldId, customers, selectedId, label, placeh
 function resolveDatalistCustomer(fieldId) {
   const el = document.getElementById(fieldId);
   const typed = (el.value || "").trim();
-  if (!typed) { state.saleForm.customerId = ""; render(); return; }
+  if (!typed) { state.saleForm.customerId = ""; state.saleForm._typed = ""; render(); return; }
   const match = scoped("customers").find((c) => normName(c.name) === normName(typed));
   state.saleForm.customerId = match ? match.id : "";
+  state.saleForm._typed = match ? "" : typed; state.saleForm._typedFinal = !match;
   render();
 }
 function quickAddCustomerFieldHtml() {
@@ -2824,7 +2992,13 @@ function updateSearchResults(resultsId, queryKey) {
 }
 function selectSaleCustomer(id) { state.saleForm.customerId = id; state._saleCustOpen = false; state._saleCustQuery = ""; render(); }
 function selectPurchaseSupplier(id) { state.purchaseForm.supplierId = id; state._purSupOpen = false; state._purSupQuery = ""; render(); }
-function closeModal() { state.modal = null; render(); applyPendingCloudSnapshotIfSafe(); }
+// النوافذ الصغيرة اللي بتنفتح من جوّا الفاتورة (الكاميرا، حاسبة السعر، صنف جديد) بترجع للفاتورة لما تتسكّر
+function cartModalNow() { return state.modal && (state.modal.type === "saleCart" || state.modal.type === "purchaseCart") ? state.modal.type : null; }
+function closeModal() {
+  const back = state.modal && state.modal._returnTo;
+  state.modal = back ? { type: back } : null;
+  render(); applyPendingCloudSnapshotIfSafe();
+}
 /* ===== زر الرجوع تبع الجوال: يرجع خطوة لورا بدل ما يطلع من التطبيق ===== */
 // بيرجّع true إذا رجع خطوة، و false إذا إحنا أصلًا بالشاشة الرئيسية (وقتها التطبيق بيطلع عادي)
 function daftarHandleBack() {
@@ -2896,6 +3070,8 @@ function cartPickAddP(id) {
   render();
 }
 function openNewSaleInvoice() {
+  // إذا في فاتورة مبلّشة وما انحفظت، بنكمّلها بدل ما تضيع
+  if (state.cart.length && !state.editingSaleId && !state.saleForm.quickMode) { state.modal = { type: "saleCart" }; render(); return; }
   state.cart = []; state.editingSaleId = null;
   state.saleForm = { customerId: "", payType: "cash", paidNow: "", quickMode: false, invoiceNo: "", quickTotal: "", photo: null };
   state._cartAddOpen = true; state._cartQ = ""; state._cartPickerAll = true;
@@ -2903,6 +3079,7 @@ function openNewSaleInvoice() {
   render();
 }
 function openNewPurchaseInvoice() {
+  if (state.pcart.length && !state.editingPurchaseId && !state.purchaseForm.quickMode) { state.modal = { type: "purchaseCart" }; render(); return; }
   state.pcart = []; state.editingPurchaseId = null;
   state.purchaseForm = { supplierId: "", payType: "cash", paidNow: "", quickMode: false, invoiceNo: "", quickTotal: "", photo: null };
   state._cartAddOpen = true; state._pcartQ = ""; state._cartPickerAll = true;
@@ -2970,11 +3147,6 @@ function renderSales() {
   <div class="row-flex" style="margin-bottom:12px;">
     <button class="btn btn-gold btn-block" onclick="openQuickSale()">🧾 فاتورة سريعة (رقم + مجموع بدون أصناف)</button>
   </div>`;
-
-  html += productPickerHtml(products, state.query, {
-    addFn: "addToCart", priceField: "price", searchId: "sales-search", queryKey: "query",
-    pickerFlag: "_salePickerOpen", scanKind: "sale", showAddNew: false, blockOutOfStock: true,
-  });
 
   html += `<div class="section-title" style="margin-top:20px;">آخر فواتير المبيعات</div>`;
   html += `<div class="search-wrap" style="margin-bottom:10px;"><span class="search-icon">🔍</span>
@@ -3127,7 +3299,7 @@ function renderSaleCartSheet() {
     ` : `<label class="field"><span class="lbl">المبلغ المدفوع الآن</span><input type="text" inputmode="decimal" class="mono" id="sale-paidnow" value="${esc(state.saleForm.paidNow)}" oninput="state.saleForm.paidNow=this.value;render();" /></label>`}
     ${state.saleForm.payType === "credit" && total - paidNum > 0 ? `<div class="flex-between" style="margin-bottom:10px;"><strong>المتبقي على العميل</strong><strong class="mono" style="color:var(--stamp);">${fmt(total - paidNum)} ${esc(settings.currency)}</strong></div>` : ""}
     ${state.saleForm.payType === "check" && total - sumCheckRows() > 0.001 ? `<div class="flex-between" style="margin-bottom:10px;"><strong>المتبقي على العميل</strong><strong class="mono" style="color:var(--stamp);">${fmt(total - sumCheckRows())} ${esc(settings.currency)}</strong></div>` : ""}
-    <button class="btn btn-block ${canSubmit ? "btn-green" : "btn-disabled"}" ${canSubmit ? "" : "disabled"} onclick="completeSale()">${editing ? "حفظ التعديلات" : "إتمام البيع"}</button>
+    <button class="btn btn-block btn-green" style="${canSubmit ? "" : "opacity:.75;"}" onclick="completeSale()">${editing ? "حفظ التعديلات" : "إتمام البيع"}</button>
   `;
 }
 function openSaleCartSheet() { state.modal = { type: "saleCart" }; render(); }
@@ -3182,12 +3354,12 @@ function renderQuickSaleSheet() {
     ` : `<label class="field"><span class="lbl">المبلغ المدفوع الآن</span><input type="text" inputmode="decimal" class="mono" id="sale-paidnow" value="${esc(state.saleForm.paidNow)}" oninput="state.saleForm.paidNow=this.value;render();" /></label>`}
     ${state.saleForm.payType === "credit" && total - paidNum > 0 ? `<div class="flex-between" style="margin-bottom:10px;"><strong>المتبقي على العميل</strong><strong class="mono" style="color:var(--stamp);">${fmt(total - paidNum)} ${esc(settings.currency)}</strong></div>` : ""}
     ${state.saleForm.payType === "check" && total - sumCheckRows() > 0.001 ? `<div class="flex-between" style="margin-bottom:10px;"><strong>المتبقي على العميل</strong><strong class="mono" style="color:var(--stamp);">${fmt(total - sumCheckRows())} ${esc(settings.currency)}</strong></div>` : ""}
-    <button class="btn btn-block ${canSubmit ? "btn-green" : "btn-disabled"}" ${canSubmit ? "" : "disabled"} onclick="completeSale()">${editing ? "حفظ التعديلات" : "إتمام البيع"}</button>
+    <button class="btn btn-block btn-green" style="${canSubmit ? "" : "opacity:.75;"}" onclick="completeSale()">${editing ? "حفظ التعديلات" : "إتمام البيع"}</button>
   `;
 }
 
 function openPriceCalc(cartType, productId) {
-  state.modal = { type: "priceCalc", cartType, productId };
+  state.modal = { type: "priceCalc", cartType, productId, _returnTo: cartType === "sale" ? "saleCart" : "purchaseCart" };
   if (!state._calcWeight) state._calcWeight = 25;
   render();
 }
@@ -3300,12 +3472,17 @@ function completeSale() {
   const tax = subtotal * ((settings.taxRate || 0) / 100);
   const discount = parseFloat(state.saleForm.discount) || 0;
   const total = Math.max(0, subtotal + tax - discount);
+  const synced = syncPartyField("sale-customer");
+  if (synced !== true) { flash(`⚠️ العميل «${synced}» مش موجود — اختاره من القائمة`); return; }
   const customerId = state.saleForm.customerId || null;
   const payType = state.saleForm.payType;
   const isCheck = payType === "check";
+  if (payType === "cash" && String(state.saleForm.paidNow || "").trim() === "") state.saleForm.paidNow = String(Math.round(total * 1000) / 1000);
   const paidNum = isCheck ? sumCheckRows() : (parseFloat(state.saleForm.paidNow) || 0);
-  const canSubmit = state.cart.length > 0 && (payType === "cash" ? paidNum >= total : payType === "check" ? (customerId && paidNum > 0) : customerId);
-  if (!canSubmit) return;
+  if (!state.cart.length) { flash("⚠️ أضف صنف واحد على الأقل"); return; }
+  if (payType === "cash" && paidNum < total - 0.0001) { flash("⚠️ المبلغ المدفوع أقل من الإجمالي — إذا الباقي دين اختار «آجل»"); render(); return; }
+  if (payType !== "cash" && !customerId) { flash("⚠️ اكتب اسم العميل (الفاتورة آجل أو بشيك)"); render(); return; }
+  if (isCheck && paidNum <= 0) { flash("⚠️ لازم تحط بيانات الشيك"); return; }
 
   const sourceWarehouseId = state.editingSaleId ? null : (state.saleForm.sourceWarehouseId || null);
   const sourceWarehouse = sourceWarehouseId ? scoped("warehouses").find((w) => w.id === sourceWarehouseId) : null;
@@ -3379,9 +3556,12 @@ function completeSale() {
 }
 function completeQuickSale() {
   const settings = currentSettings();
+  const synced = syncPartyField("sale-customer");
+  if (synced !== true) { flash(`⚠️ العميل «${synced}» مش موجود — اختاره من القائمة`); return; }
   const total = parseFloat(state.saleForm.quickTotal) || 0;
   const customerId = state.saleForm.customerId || null;
   const payType = state.saleForm.payType;
+  if (payType === "cash" && String(state.saleForm.paidNow || "").trim() === "") state.saleForm.paidNow = String(total);
   const isCheck = payType === "check";
   const paidNum = isCheck ? sumCheckRows() : (parseFloat(state.saleForm.paidNow) || 0);
   if (total <= 0) { flash("⚠️ لازم تحط المبلغ الأول"); return; }
@@ -3471,11 +3651,6 @@ function renderPurchases() {
   <div class="row-flex" style="margin-bottom:12px;">
     <button class="btn btn-gold btn-block" onclick="openQuickPurchase()">🧾 فاتورة سريعة (رقم + مجموع بدون أصناف)</button>
   </div>`;
-
-  html += productPickerHtml(products, state.pquery, {
-    addFn: "addToPCart", priceField: "cost", searchId: "purchase-search", queryKey: "pquery",
-    pickerFlag: "_purchasePickerOpen", scanKind: "purchase", showAddNew: true, blockOutOfStock: false,
-  });
 
   html += `<div class="section-title" style="margin-top:20px;">آخر فواتير المشتريات</div>`;
   html += `<div class="search-wrap" style="margin-bottom:10px;"><span class="search-icon">🔍</span>
@@ -3588,7 +3763,7 @@ function renderPurchaseCartSheet() {
     </div>
     <label class="field"><span class="lbl">المبلغ المدفوع الآن</span><input id="purchase-paidnow" type="text" inputmode="decimal" class="mono" value="${esc(state.purchaseForm.paidNow)}" oninput="state.purchaseForm.paidNow=this.value;render();" /></label>
     ${state.purchaseForm.payType === "credit" && total - paidNum > 0 ? `<div class="flex-between" style="margin-bottom:10px;"><strong>المتبقي للمورد</strong><strong class="mono" style="color:var(--stamp);">${fmt(total - paidNum)} ${esc(settings.currency)}</strong></div>` : ""}
-    <button class="btn btn-block ${canSubmit ? "btn-green" : "btn-disabled"}" ${canSubmit ? "" : "disabled"} onclick="completePurchase()">${editing ? "حفظ التعديلات" : "حفظ الفاتورة"}</button>
+    <button class="btn btn-block btn-green" style="${canSubmit ? "" : "opacity:.75;"}" onclick="completePurchase()">${editing ? "حفظ التعديلات" : "حفظ الفاتورة"}</button>
   `;
 }
 function openPurchaseCartSheet() { state.modal = { type: "purchaseCart" }; render(); }
@@ -3622,7 +3797,7 @@ function renderQuickPurchaseSheet() {
     </div>
     <label class="field"><span class="lbl">المبلغ المدفوع الآن</span><input id="purchase-paidnow" type="text" inputmode="decimal" class="mono" value="${esc(state.purchaseForm.paidNow)}" oninput="state.purchaseForm.paidNow=this.value;render();" /></label>
     ${state.purchaseForm.payType === "credit" && total - paidNum > 0 ? `<div class="flex-between" style="margin-bottom:10px;"><strong>المتبقي للمورد</strong><strong class="mono" style="color:var(--stamp);">${fmt(total - paidNum)} ${esc(settings.currency)}</strong></div>` : ""}
-    <button class="btn btn-block ${canSubmit ? "btn-green" : "btn-disabled"}" ${canSubmit ? "" : "disabled"} onclick="completePurchase()">${editing ? "حفظ التعديلات" : "حفظ الفاتورة"}</button>
+    <button class="btn btn-block btn-green" style="${canSubmit ? "" : "opacity:.75;"}" onclick="completePurchase()">${editing ? "حفظ التعديلات" : "حفظ الفاتورة"}</button>
   `;
 }
 
@@ -3666,12 +3841,15 @@ function resetPurchaseForm() {
 }
 function completePurchase() {
   if (state.purchaseForm.quickMode) return completeQuickPurchase();
+  syncPartyField("purchase-supplier");
   const total = state.pcart.reduce((a, c) => a + c.cost * c.qty, 0);
+  const payType = state.purchaseForm.payType;
+  if (payType === "cash" && String(state.purchaseForm.paidNow || "").trim() === "") state.purchaseForm.paidNow = String(Math.round(total * 1000) / 1000);
   const paidNum = parseFloat(state.purchaseForm.paidNow) || 0;
   let supplierId = state.purchaseForm.supplierId || null;
-  const payType = state.purchaseForm.payType;
-  const canSubmit = state.pcart.length > 0 && (payType === "cash" ? paidNum >= total : supplierId);
-  if (!canSubmit) return;
+  if (!state.pcart.length) { flash("⚠️ أضف صنف واحد على الأقل"); return; }
+  if (payType === "cash" && paidNum < total - 0.0001) { flash("⚠️ المبلغ المدفوع أقل من الإجمالي — إذا الباقي دين اختار «آجل»"); render(); return; }
+  if (payType !== "cash" && !supplierId) { flash("⚠️ اكتب اسم المورد (الفاتورة آجل)"); render(); return; }
 
   // if a customer name was picked instead of an existing supplier, auto-create a linked supplier record
   if (supplierId && supplierId.startsWith("custlink:")) {
@@ -3711,7 +3889,9 @@ function completePurchase() {
   resetPurchaseForm();
 }
 function completeQuickPurchase() {
+  syncPartyField("purchase-supplier");
   const total = parseFloat(state.purchaseForm.quickTotal) || 0;
+  if (state.purchaseForm.payType === "cash" && String(state.purchaseForm.paidNow || "").trim() === "") state.purchaseForm.paidNow = String(total);
   const paidNum = parseFloat(state.purchaseForm.paidNow) || 0;
   let supplierId = state.purchaseForm.supplierId || null;
   const payType = state.purchaseForm.payType;
@@ -3771,7 +3951,7 @@ function deletePurchase(id) {
 }
 
 /* new item on invoice modal (purchases) */
-function openNewItemModal(name, barcode, kind) { state.modal = { type: "newItem", name: name || "", barcode: barcode || "", kind: kind || "purchase" }; render(); }
+function openNewItemModal(name, barcode, kind) { state.modal = { type: "newItem", name: name || "", barcode: barcode || "", kind: kind || "purchase", _returnTo: cartModalNow() || (state.modal && state.modal._returnTo) || null }; render(); }
 function saveNewItem() {
   const name = document.getElementById("ni-name").value.trim();
   if (!name) return;
@@ -3798,7 +3978,7 @@ function saveNewItem() {
 let scannerStream = null;
 let pendingCapture = null; // { kind: 'product'|'newItem', vals }
 function openScanModal(context) {
-  state.modal = { type: "scan", context, onDetect: (code) => handleScanResult(context, code) };
+  state.modal = { type: "scan", context, _returnTo: cartModalNow(), onDetect: (code) => handleScanResult(context, code) };
   render();
 }
 function scanIntoBarcodeField() {
@@ -3862,7 +4042,7 @@ function handleScanResult(context, code) {
     const found = products.find((p) => p.barcode && p.barcode === code);
     if (context === "sale") {
       if (found) { addToCart(found.id); flash("تمت إضافة: " + found.name); }
-      else { state.query = code; flash("لم يتم العثور على منتج بهذا الباركود"); render(); }
+      else { state._cartQ = code; state._cartAddOpen = true; flash("لم يتم العثور على منتج بهذا الباركود"); render(); }
     } else {
       if (found) { addToPCart(found.id); flash("تمت إضافة: " + found.name); }
       else { openNewItemModal("", code); }
@@ -4043,6 +4223,24 @@ function addVoucher(kind, partyId) {
     addScoped("vouchers", v);
     flash(`تم تجيير ${ids.length} شيك للمورد`);
     state._voucherMethod = "cash"; state._selectedEndorseChecks = [];
+    render();
+    printVoucher(kind, v);
+    return;
+  }
+
+  if (kind === "supplier" && state._voucherMethod === "own") {
+    const amount = parseFloat((document.getElementById("v-amount") || {}).value) || 0;
+    const checkNo = ((document.getElementById("v-chkno") || {}).value || "").trim();
+    const bank = ((document.getElementById("v-bank") || {}).value || "").trim();
+    const dueDate = (document.getElementById("v-due") || {}).value || "";
+    if (amount <= 0) { flash("اكتب مبلغ الشيك"); return; }
+    if (!dueDate) { flash("اختار تاريخ استحقاق الشيك"); return; }
+    const label = `شيك صادر${checkNo ? " رقم " + checkNo : ""}${bank ? " — " + bank : ""} — استحقاق ${dueDate}${desc ? " — " + desc : ""}`;
+    const v = { id: uid(), ts: new Date().toISOString(), partyKind: kind, partyId, partyName: party ? party.name : "", amount, desc: label, method: "owncheck", cashAmount: 0, checkNo, bank, dueDate };
+    addScoped("vouchers", v);
+    addScoped("issuedChecks", { id: uid(), ts: v.ts, voucherId: v.id, partyId, partyName: v.partyName, amount, checkNo, bank, dueDate, status: "pending", note: desc });
+    flash("✅ تم تسجيل الشيك الصادر ونزلت ذمة المورد");
+    state._voucherMethod = "cash";
     render();
     printVoucher(kind, v);
     return;
@@ -4251,6 +4449,61 @@ function deleteExpense(id) {
 }
 
 /* ===================== CASHBOX ===================== */
+/* ===== الشيكات الصادرة (تصدير شيك لمورد) ===== */
+function issuedDueSoon() {
+  const lim = Date.now() + 7 * 864e5;
+  return scoped("issuedChecks").filter((c) => c.status === "pending" && c.dueDate && new Date(c.dueDate + "T23:59:59").getTime() <= lim);
+}
+function issuedChecksSectionHtml() {
+  const settings = currentSettings();
+  const all = scoped("issuedChecks");
+  if (!all.length) return "";
+  const pending = all.filter((c) => c.status === "pending").sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
+  const cleared = all.filter((c) => c.status === "cleared").sort((a, b) => String(b.clearedAt || "").localeCompare(String(a.clearedAt || ""))).slice(0, 10);
+  const total = pending.reduce((a, c) => a + c.amount, 0);
+  const today = new Date().toISOString().slice(0, 10);
+  const row = (c) => {
+    const late = c.status === "pending" && c.dueDate && c.dueDate <= today;
+    return `<div class="card" style="padding:10px 12px;margin-bottom:8px;${late ? "border:1.5px solid var(--stamp);" : ""}">
+      <div class="flex-between"><div class="flex1">
+        <div class="truncate" style="font-size:13px;font-weight:600;">لـ ${esc(c.partyName || "")}</div>
+        <div class="mono row-sub">${c.checkNo ? "رقم " + esc(c.checkNo) + " · " : ""}${c.bank ? esc(c.bank) + " · " : ""}استحقاق: ${c.dueDate ? fmtDate(c.dueDate) : "—"}</div>
+      </div><span class="mono" style="font-weight:700;font-size:15px;">${fmt(c.amount)}</span></div>
+      <div class="flex-between" style="margin-top:8px;">
+        <span class="chip mono" style="background:${c.status === "cleared" ? "var(--greenLight)" : late ? "var(--stampLight)" : "var(--goldLight)"};color:${c.status === "cleared" ? "var(--green)" : late ? "var(--stamp)" : "var(--gold)"};">${c.status === "cleared" ? "انصرف ✓" : late ? "مستحق اليوم أو فات موعده" : "قيد الصرف"}</span>
+        <div class="row-flex">
+          ${c.status === "pending" ? `<button class="btn btn-green" style="padding:5px 10px;font-size:11px;" onclick="clearIssuedCheck('${c.id}')">انصرف ✓</button>
+          <button class="btn btn-ghost" style="padding:5px 10px;font-size:11px;color:var(--stamp);" onclick="cancelIssuedCheck('${c.id}')">إلغاء الشيك</button>` : `<button class="btn btn-ghost" style="padding:5px 10px;font-size:11px;" onclick="unclearIssuedCheck('${c.id}')">تراجع</button>`}
+        </div>
+      </div></div>`;
+  };
+  return `<div class="flex-between" style="margin:14px 0 8px;"><div class="section-title" style="margin:0;">📝 شيكات صادرة</div>
+      <span class="chip mono" style="background:var(--goldLight);color:var(--gold);">قيد الصرف: ${fmt(total)} ${esc(settings.currency)}</span></div>
+    ${pending.length ? pending.map(row).join("") : emptyState("ما في شيكات صادرة قيد الصرف", true)}
+    ${cleared.length ? `<div class="row-sub" style="margin:8px 0 6px;">آخر الشيكات اللي انصرفت</div>` + cleared.map(row).join("") : ""}`;
+}
+function clearIssuedCheck(id) {
+  const c = scoped("issuedChecks").find((x) => x.id === id);
+  if (!c) return;
+  if (!confirm(`تأكيد إنه انصرف الشيك${c.checkNo ? " رقم " + c.checkNo : ""} بمبلغ ${fmt(c.amount)}؟ رح ينخصم من الصندوق.`)) return;
+  persistScoped("issuedChecks", scoped("issuedChecks").map((x) => (x.id === id ? { ...x, status: "cleared", clearedAt: new Date().toISOString() } : x)));
+  flash("✅ انصرف الشيك وانخصم من الصندوق");
+  render();
+}
+function unclearIssuedCheck(id) {
+  if (!confirm("ترجيع الشيك لـ «قيد الصرف»؟ المبلغ رح يرجع للصندوق.")) return;
+  persistScoped("issuedChecks", scoped("issuedChecks").map((x) => (x.id === id ? { ...x, status: "pending", clearedAt: null } : x)));
+  render();
+}
+function cancelIssuedCheck(id) {
+  const c = scoped("issuedChecks").find((x) => x.id === id);
+  if (!c) return;
+  if (!confirm(`إلغاء الشيك${c.checkNo ? " رقم " + c.checkNo : ""}؟ (مثلاً رجع أو انكتب غلط) — رح ترجع ذمة المورد ${c.partyName || ""} زي ما كانت.`)) return;
+  persistScoped("issuedChecks", scoped("issuedChecks").filter((x) => x.id !== id));
+  if (c.voucherId) persistScoped("vouchers", scoped("vouchers").filter((v) => v.id !== c.voucherId));
+  flash("تم إلغاء الشيك");
+  render();
+}
 function renderCashbox() {
   const settings = currentSettings();
   const cb = cashBalance();
@@ -4347,6 +4600,7 @@ function renderCashbox() {
       return acc;
     }, "")}
   </div>
+  ${issuedChecksSectionHtml()}
   <div class="section-title">آخر الحركات النقدية</div>`;
   if (ledger.length === 0) html += emptyState("لا توجد حركات بعد", true);
   else {
@@ -5455,7 +5709,7 @@ function printVoucher(kind, v) {
   const settings = currentSettings();
   const hasChecks = v.method === "check" || v.method === "mixed";
   const linkedChecks = hasChecks ? scoped("checks").filter((c) => c.voucherId === v.id) : [];
-  const methodLabel = v.method === "check" ? `(${v.checksCount || linkedChecks.length || 1} شيك)` : v.method === "mixed" ? `(نقدي + ${v.checksCount || linkedChecks.length || 1} شيك)` : "(نقدي)";
+  const methodLabel = v.method === "owncheck" ? `(شيك صادر${v.checkNo ? " رقم " + esc(v.checkNo) : ""} — استحقاق ${esc(v.dueDate || "")})` : v.method === "check" ? `(${v.checksCount || linkedChecks.length || 1} شيك)` : v.method === "mixed" ? `(نقدي + ${v.checksCount || linkedChecks.length || 1} شيك)` : "(نقدي)";
   const html = `${printHead(settings)}
     <div style="text-align:center;font-weight:700;font-size:13px;margin-bottom:10px;">${kind === "customer" ? "سند قبض" : "سند صرف"} ${(() => { const sv = (DB.vouchers || []).find((x) => x.id === v.id) || v; return sv.no ? `<bdi>${docNo(sv, "vouchers")}</bdi>` : ""; })()} ${methodLabel}</div>
     <div style="display:flex;justify-content:space-between;font-size:12px;"><span>${kind === "customer" ? "من العميل" : "إلى المورد"}</span><span>${esc(v.partyName)}</span></div>
@@ -5956,10 +6210,14 @@ function partyDetailHtml(kind, id) {
         <strong class="mono">${fmt((parseFloat(state._voucherCash) || 0) + (state._showChecksInVoucher ? sumCheckRows() : 0))} ${esc(settings.currency)}</strong>
       </div>` : `
       <div class="row-flex" style="margin-bottom:8px;">
-        <button class="btn ${state._voucherMethod !== "check" ? "btn-green" : "btn-ghost"} flex1" onclick="state._voucherMethod='cash';render();">نقدي</button>
-        <button class="btn ${state._voucherMethod === "check" ? "btn-gold" : "btn-ghost"} flex1" onclick="state._voucherMethod='check';render();">تجيير شيك/شيكات عندي</button>
+        <button class="btn ${!state._voucherMethod || state._voucherMethod === "cash" ? "btn-green" : "btn-ghost"} flex1" style="padding:8px 4px;font-size:12.5px;" onclick="state._voucherMethod='cash';render();">نقدي</button>
+        <button class="btn ${state._voucherMethod === "own" ? "btn-green" : "btn-ghost"} flex1" style="padding:8px 4px;font-size:12.5px;" onclick="state._voucherMethod='own';render();">📝 تصدير شيك</button>
+        <button class="btn ${state._voucherMethod === "check" ? "btn-gold" : "btn-ghost"} flex1" style="padding:8px 4px;font-size:12.5px;" onclick="state._voucherMethod='check';render();">تجيير شيك عندي</button>
       </div>
       ${state._voucherMethod !== "check" ? `<div class="grid2" style="margin-bottom:8px;"><input id="v-amount" type="text" inputmode="decimal" class="mono" placeholder="المبلغ" /><input id="v-desc" placeholder="بيان (اختياري)" /></div>` : `<label class="field"><span class="lbl">بيان عام (اختياري)</span><input id="v-desc" /></label>`}
+      ${state._voucherMethod === "own" ? `<div class="row-sub" style="margin-bottom:8px;">ذمة المورد بتنزل هلأ، والمبلغ بينخصم من الصندوق بس لما ينصرف الشيك.</div>
+        <div class="grid2" style="margin-bottom:8px;"><input id="v-chkno" class="mono" placeholder="رقم الشيك" inputmode="numeric" /><input id="v-bank" placeholder="البنك" /></div>
+        <label class="field" style="margin-bottom:8px;"><span class="lbl">تاريخ الاستحقاق</span><input id="v-due" type="date" /></label>` : ""}
       ${state._voucherMethod === "check" ? (() => {
         const pending = scoped("checks").filter((c) => c.status === "pending").sort((a, b) => new Date(a.dueDate || a.ts) - new Date(b.dueDate || b.ts));
         if (pending.length === 0) return `<div class="row-sub" style="margin-bottom:8px;color:var(--stamp);">لا توجد شيكات قيد التحصيل حاليًا لتجييرها</div>`;
@@ -5972,7 +6230,7 @@ function partyDetailHtml(kind, id) {
         </div>
         <div class="flex-between" style="margin-bottom:10px;padding:8px 10px;background:var(--paperLight);border-radius:8px;"><strong>إجمالي المختار</strong><strong class="mono">${fmt(sumSelectedEndorseChecks())} ${esc(settings.currency)}</strong></div>`;
       })() : ``}`}
-      <button class="btn btn-green btn-block" onclick="addVoucher('${kind}','${id}')">${isCustomer ? "تسجيل السند" : (state._voucherMethod === "check" ? "تأكيد التجيير" : "تسجيل الدفع")}</button>
+      <button class="btn btn-green btn-block" onclick="addVoucher('${kind}','${id}')">${isCustomer ? "تسجيل السند" : (state._voucherMethod === "check" ? "تأكيد التجيير" : state._voucherMethod === "own" ? "تسجيل الشيك الصادر" : "تسجيل الدفع")}</button>
     </div>
     <div class="row-title" style="margin-bottom:8px;">كشف الحساب</div>
     ${combined.length === 0 ? emptyState("لا توجد حركات بعد", true) : combined.map((c) => `
@@ -6749,6 +7007,7 @@ function deleteRepAccount(id) {
   const r = reps.find((x) => x.id === id);
   if (!r) return;
   if (!confirm(`متأكد بدك تشيل المندوب ${r.name}؟ ما رح يقدر يدخل بعدها، وحركاته القديمة بتضل عندك.`)) return;
+  const tb = syncLoadTombs(); tb["reps|" + id] = { at: Date.now(), acc: r.accountId }; syncSaveTombs(tb);
   saveKey("reps", reps.filter((x) => x.id !== id));
   if (r.email) repRemoveCloud(r.email);
   flash("تم حذف المندوب");
