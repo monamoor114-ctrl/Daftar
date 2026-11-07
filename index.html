@@ -4107,9 +4107,10 @@ function handleScanResult(context, code) {
     state.modal = { type: "warehouseDetail", id: state._transferScanWarehouseId };
     const products = scoped("products");
     const found = products.find((p) => p.barcode && barcodeMatches(p.barcode, code));
-    if (found) { state._transferScannedProductId = found.id; flash("لاقيت: " + found.name + " — دلوقتي حط الكمية ودوس إضافة"); }
+    if (found) { state._transferScannedProductId = found.id; flash("✅ " + found.name + " — اكتب الكمية"); }
     else { flash("لم يتم العثور على منتج بهذا الباركود"); }
     render();
+    setTimeout(() => { const q = document.getElementById("we-qty"); if (q && found) q.focus(); }, 120);
     return;
   }
   closeModal();
@@ -5156,8 +5157,17 @@ function deleteWarehouse(id) {
   closeModal();
 }
 function openWarehouseDetail(id) { state.modal = { type: "warehouseDetail", id }; render(); }
+function resolveTransferProduct(fieldId) {
+  const el = document.getElementById(fieldId); if (!el) return;
+  const p = scoped("products").find((x) => normName(x.name) === normName(el.value));
+  const id = p ? p.id : null;
+  if (state._transferScannedProductId === id) return;
+  state._transferScannedProductId = id;
+  render();
+  if (p) setTimeout(() => { const q = document.getElementById("we-qty"); if (q) q.focus(); }, 80);
+}
 function addTransferCartItem() {
-  const productId = document.getElementById("we-product-select").value;
+  const productId = state._transferScannedProductId || "";
   const product = scoped("products").find((p) => p.id === productId);
   const qty = parseFloat(document.getElementById("we-qty").value) || 0;
   if (!product || qty <= 0) { flash("اختار صنف وحط كمية أول"); return; }
@@ -5167,6 +5177,7 @@ function addTransferCartItem() {
   else state._transferCart.push({ productId, name: product.name, qty });
   state._transferScannedProductId = null;
   render();
+  setTimeout(() => { const f = document.getElementById("tr-product"); if (f) f.focus(); }, 80);
 }
 function removeTransferCartItem(index) {
   state._transferCart.splice(index, 1);
@@ -5176,7 +5187,7 @@ function confirmTransfer(warehouseId) {
   const mode = state._whEntryType;
   const isIn = mode === "transfer_in";
   const cart = state._transferCart && state._transferCart.length > 0 ? state._transferCart : (() => {
-    const productId = document.getElementById("we-product-select").value;
+    const productId = state._transferScannedProductId || "";
     const product = scoped("products").find((p) => p.id === productId);
     const qty = parseFloat(document.getElementById("we-qty").value) || 0;
     return product && qty > 0 ? [{ productId, name: product.name, qty }] : [];
@@ -5206,7 +5217,7 @@ function confirmTransfer(warehouseId) {
     }
   });
   flash(`تم نقل ${cart.length} صنف ${isIn ? "للمستودع" : "للمحل"}`);
-  state._transferCart = [];
+  state._transferCart = []; state._transferScannedProductId = null;
   render();
 }
 function saveWarehouseEntry(warehouseId) {
@@ -6184,14 +6195,19 @@ function warehouseDetailHtml(id) {
         ${cart.length > 0 ? `<div class="card" style="padding:8px 10px;margin-bottom:10px;">
           ${cart.map((c, i) => `<div class="list-row" style="padding:6px 0;"><span class="flex1 truncate" style="font-size:12.5px;">${esc(c.name)}</span><span class="mono" style="font-weight:700;">${fmt(c.qty)}</span><button class="icon-btn" style="color:var(--stamp);" onclick="removeTransferCartItem(${i})">🗑</button></div>`).join("")}
         </div>` : ``}
-        <div class="grid2" style="margin-bottom:8px;">
-          <select id="we-product-select">
-            ${mainProducts.map((p) => `<option value="${p.id}" ${state._transferScannedProductId === p.id ? "selected" : ""}>${esc(p.name)} (${fmt(p.stock)})</option>`).join("")}
-          </select>
-          <input id="we-qty" type="text" inputmode="decimal" class="mono" placeholder="الكمية" />
-        </div>
-        <button class="btn btn-ghost btn-block" style="margin-bottom:8px;background:var(--greenLight);color:var(--green);" onclick="state._transferScanWarehouseId='${id}';openScanModal('transfer')">📷 صوّر الباركود بدل ما تدوّر عليه</button>
-        <button class="btn btn-ghost btn-block" style="margin-bottom:10px;background:var(--greenLight);color:var(--green);" onclick="addTransferCartItem()">＋ إضافة صنف تاني للنقلة</button>
+        ${(() => {
+          const whBal = (name) => scoped("warehouseEntries").filter((e) => e.warehouseId === id && e.productName === name).reduce((a, e) => a + (e.type === "in" ? e.qty : -e.qty), 0);
+          const sel = mainProducts.find((p) => p.id === state._transferScannedProductId);
+          const avail = sel ? (isIn ? sel.stock : whBal(sel.name)) : 0;
+          return `${suggestFieldHtml("tr-product", mainProducts, state._transferScannedProductId, "🔍 الصنف — اكتب اسمه", "اكتب أول حرفين من اسم الصنف...", "resolveTransferProduct")}
+          <button class="btn btn-ghost btn-block" style="margin-bottom:10px;background:var(--greenLight);color:var(--green);" onclick="state._transferScanWarehouseId='${id}';openScanModal('transfer')">📷 أو صوّر الباركود</button>
+          ${sel ? `<div class="card" style="padding:10px 12px;margin-bottom:8px;background:var(--greenLight);border:none;">
+            <div class="flex-between"><strong style="font-size:13.5px;">${esc(sel.name)}</strong><span class="row-sub">المتوفر ${isIn ? "بالمحل" : "بالمستودع"}: <strong class="mono">${fmt(avail)}</strong></span></div>
+            <div class="row-flex" style="margin-top:8px;gap:8px;">
+              <input id="we-qty" type="text" inputmode="decimal" class="mono flex1" placeholder="الكمية" style="font-size:16px;" onkeydown="if(event.key==='Enter'){event.preventDefault();addTransferCartItem();}" />
+              <button class="btn btn-green" style="padding:10px 16px;" onclick="addTransferCartItem()">＋ إضافة</button>
+            </div></div>` : ``}`;
+        })()}
         <button class="btn btn-gold btn-block" onclick="confirmTransfer('${id}')">${isIn ? `تأكيد نقل ${cart.length > 0 ? "كل الأصناف (" + cart.length + ")" : "للمستودع"}` : `تأكيد نقل ${cart.length > 0 ? "كل الأصناف (" + cart.length + ")" : "للمحل"}`}</button>`;
       })() : `
       ${(() => { SUGGEST["we-product"] = { names: Object.keys(byProduct), onResolve: "resolveWhProduct" }; return ""; })()}<label class="field" style="margin-bottom:4px;"><span class="lbl">اسم الصنف</span>
