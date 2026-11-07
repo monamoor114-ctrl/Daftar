@@ -5166,7 +5166,7 @@ function deleteWarehouse(id) {
   persistScoped("warehouseEntries", scoped("warehouseEntries").filter((e) => e.warehouseId !== id));
   closeModal();
 }
-function openWarehouseDetail(id) { state.modal = { type: "warehouseDetail", id }; render(); }
+function openWarehouseDetail(id) { state.modal = { type: "warehouseDetail", id }; state._whEntryType = "transfer_in"; state._lastTransfer = null; state._whShowBal = false; state._transferCart = []; state._transferScannedProductId = null; render(); }
 function resolveTransferProduct(fieldId) {
   const el = document.getElementById(fieldId); if (!el) return;
   const p = scoped("products").find((x) => normName(x.name) === normName(el.value));
@@ -5224,17 +5224,19 @@ function confirmTransfer(warehouseId) {
     }
   }
 
+  const batch = uid(); const batchTs = new Date().toISOString();
   cart.forEach((item) => {
     if (isIn) {
       persistScoped("products", scoped("products").map((p) => (p.id === item.productId ? { ...p, stock: p.stock - item.qty } : p)));
-      addScoped("warehouseEntries", { id: uid(), warehouseId, ts: new Date().toISOString(), type: "in", productName: item.name, qty: item.qty, unit: "", party: "", note: "منقول من المحل" });
+      addScoped("warehouseEntries", { id: uid(), warehouseId, ts: batchTs, type: "in", productName: item.name, qty: item.qty, unit: "", party: "", note: "منقول من المحل", batch });
     } else {
       persistScoped("products", scoped("products").map((p) => (p.id === item.productId ? { ...p, stock: p.stock + item.qty } : p)));
-      addScoped("warehouseEntries", { id: uid(), warehouseId, ts: new Date().toISOString(), type: "out", productName: item.name, qty: item.qty, unit: "", party: "", note: "منقول للمحل" });
+      addScoped("warehouseEntries", { id: uid(), warehouseId, ts: batchTs, type: "out", productName: item.name, qty: item.qty, unit: "", party: "", note: "منقول للمحل", batch });
     }
   });
   flash(`تم نقل ${cart.length} صنف ${isIn ? "للمستودع" : "للمحل"}`);
   state._transferCart = []; state._transferScannedProductId = null;
+  state._lastTransfer = { warehouseId, batch, isIn };
   render();
 }
 function saveWarehouseEntry(warehouseId) {
@@ -6137,6 +6139,35 @@ function warehouseModalHtml(w) {
       <button class="btn btn-green flex1" onclick="saveWarehouseFromForm()">حفظ</button>
     </div>`;
 }
+function printTransferReceipt(warehouseId, mode) {
+  const w = scoped("warehouses").find((x) => x.id === warehouseId);
+  if (!w) return;
+  const settings = currentSettings();
+  const all = scoped("warehouseEntries").filter((e) => e.warehouseId === warehouseId && (e.note === "منقول من المحل" || e.note === "منقول للمحل"));
+  let items, title, sub;
+  if (mode === "last" && state._lastTransfer && state._lastTransfer.warehouseId === warehouseId) {
+    items = all.filter((e) => e.batch === state._lastTransfer.batch);
+    title = state._lastTransfer.isIn ? `سند تسليم بضاعة — ${esc(w.name)}` : `سند إرجاع بضاعة للمحل — ${esc(w.name)}`;
+    sub = items.length ? fmtDateTime(items[0].ts) : "";
+  } else {
+    const today = new Date().toDateString();
+    items = all.filter((e) => new Date(e.ts).toDateString() === today);
+    title = `البضاعة المسلّمة اليوم — ${esc(w.name)}`;
+    sub = fmtDate(new Date());
+  }
+  const sum = (type) => { const m = {}; items.filter((e) => e.type === type).forEach((e) => { m[e.productName] = (m[e.productName] || 0) + e.qty; }); return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0], "ar")); };
+  const outRows = sum("in"), backRows = sum("out");
+  const table = (rows) => `<table style="width:100%;font-size:12px;border-collapse:collapse;"><thead><tr style="border-bottom:1.5px solid #333;font-weight:700;"><th style="text-align:right;padding:5px 4px;">#</th><th style="text-align:right;padding:5px 4px;">الصنف</th><th style="text-align:center;padding:5px 4px;">الكمية</th></tr></thead><tbody>${rows.map(([n, q], i) => `<tr style="border-bottom:1px dotted #ccc;page-break-inside:avoid;break-inside:avoid;"><td style="padding:5px 4px;">${i + 1}</td><td style="text-align:right;padding:5px 4px;">${esc(n)}</td><td style="text-align:center;padding:5px 4px;font-weight:700;">${fmt(q)}</td></tr>`).join("")}</tbody></table>
+    <div style="display:flex;justify-content:space-between;font-weight:700;font-size:12px;border-top:1px solid #999;margin-top:4px;padding-top:4px;"><span>عدد الأصناف: ${rows.length}</span><span>مجموع الكميات: ${fmt(rows.reduce((a, r) => a + r[1], 0))}</span></div>`;
+  const html = `${printHead(settings)}
+    <div style="text-align:center;font-weight:700;font-size:14px;margin-bottom:2px;">${title}</div>
+    <div style="text-align:center;font-size:11px;color:#666;margin-bottom:12px;">${sub}</div>
+    ${outRows.length === 0 && backRows.length === 0 ? `<div style="text-align:center;font-size:12px;color:#888;">ما في بضاعة طلعت اليوم</div>` : ""}
+    ${outRows.length ? (mode === "last" ? "" : `<div style="font-weight:700;font-size:12px;margin-bottom:4px;">طلع له من المحل</div>`) + table(outRows) : ""}
+    ${backRows.length ? `<div style="font-weight:700;font-size:12px;margin:12px 0 4px;">رجّع للمحل</div>` + table(backRows) : ""}
+    <div style="margin-top:28px;font-size:11.5px;display:flex;justify-content:space-between;"><span>المستلم: _______________</span><span>التوقيع: _______________</span></div>`;
+  showPrint(html);
+}
 function printWarehouseStock(id) {
   const w = scoped("warehouses").find((x) => x.id === id);
   if (!w) return;
@@ -6192,10 +6223,6 @@ function warehouseDetailHtml(id) {
     </div></div>
     ${w.notes ? `<div class="row-sub" style="margin-bottom:10px;">${esc(w.notes)}</div>` : ``}
 
-    <div class="section-title" style="margin-top:0;">الرصيد الحالي لكل صنف</div>
-    ${Object.keys(byProduct).length === 0 ? emptyState("لا توجد أصناف بعد", true) : `<div class="card" style="margin-bottom:14px;">` +
-      Object.entries(byProduct).map(([name, v]) => `<div class="list-row"><span class="flex1 truncate">${esc(name)}</span><span class="mono" style="font-weight:700;">${fmt(v.in - v.out)} ${esc(v.unit)}</span></div>`).join("") + `</div>`}
-
     <div class="card" style="padding:12px;margin-bottom:14px;">
       <div class="row-title" style="margin-bottom:8px;">إضافة سند</div>
       <div class="row-flex" style="margin-bottom:8px;flex-wrap:wrap;gap:6px;">
@@ -6208,7 +6235,14 @@ function warehouseDetailHtml(id) {
         const mainProducts = scoped("products");
         const isIn = state._whEntryType === "transfer_in";
         const cart = state._transferCart || [];
-        return `<div class="row-sub" style="margin-bottom:8px;background:var(--goldLight);padding:8px 10px;border-radius:8px;color:#5B4B1F;">${isIn ? "هينقص من مخزون المحل، ويزيد في هذا المستودع تلقائي" : "هيزيد في مخزون المحل، وينقص من هذا المستودع تلقائي"}</div>
+        const lt = state._lastTransfer && state._lastTransfer.warehouseId === id ? state._lastTransfer : null;
+        return `${lt ? `<div class="card" style="padding:10px 12px;margin-bottom:10px;background:var(--greenLight);border:none;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:8px;">✅ تم النقل — بدك تطبع سند التسليم؟</div>
+          <div class="row-flex" style="gap:8px;">
+            <button class="btn btn-green flex1" style="font-size:12.5px;" onclick="printTransferReceipt('${id}','last')">🖨 هالنقلة بس</button>
+            <button class="btn btn-ghost flex1" style="font-size:12.5px;" onclick="printTransferReceipt('${id}','today')">🖨 كل اللي طلع اليوم</button>
+          </div></div>` : `<button class="btn btn-ghost btn-block" style="margin-bottom:8px;font-size:12.5px;" onclick="printTransferReceipt('${id}','today')">🖨 كشف اللي طلع اليوم</button>`}
+        <div class="row-sub" style="margin-bottom:8px;background:var(--goldLight);padding:8px 10px;border-radius:8px;color:#5B4B1F;">${isIn ? "هينقص من مخزون المحل، ويزيد في هذا المستودع تلقائي" : "هيزيد في مخزون المحل، وينقص من هذا المستودع تلقائي"}</div>
         ${cart.length > 0 ? `<div class="card" style="padding:8px 10px;margin-bottom:10px;">
           ${cart.map((c, i) => `<div class="list-row" style="padding:6px 0;"><span class="flex1 truncate" style="font-size:12.5px;">${esc(c.name)}</span><span class="mono" style="font-weight:700;">${fmt(c.qty)}</span><button class="icon-btn" style="color:var(--stamp);" onclick="removeTransferCartItem(${i})">🗑</button></div>`).join("")}
         </div>` : ``}
@@ -6241,6 +6275,10 @@ function warehouseDetailHtml(id) {
       <button class="btn btn-green btn-block" onclick="saveWarehouseEntry('${id}')">${state._whEntryType === "out" ? "تسجيل سند الإخراج" : "تسجيل سند الإدخال"}</button>
       `}
     </div>
+
+    <button class="btn btn-ghost btn-block" style="margin-bottom:10px;justify-content:space-between;display:flex;" onclick="state._whShowBal=!state._whShowBal;render();"><span>📦 الرصيد الحالي لكل صنف (${Object.keys(byProduct).filter((n) => Math.abs(byProduct[n].in - byProduct[n].out) > 1e-9).length})</span><span>${state._whShowBal ? "▲" : "▼"}</span></button>
+    ${state._whShowBal ? (Object.keys(byProduct).length === 0 ? emptyState("لا توجد أصناف بعد", true) : `<div class="card" style="margin-bottom:14px;">` +
+      Object.entries(byProduct).map(([name, v]) => `<div class="list-row"><span class="flex1 truncate">${esc(name)}</span><span class="mono" style="font-weight:700;">${fmt(v.in - v.out)} ${esc(v.unit)}</span></div>`).join("") + `</div>`) : ""}
 
     <div class="section-title">سجل السندات</div>
     ${sorted.length === 0 ? emptyState("لا توجد سندات بعد", true) : sorted.map((e) => `
