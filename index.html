@@ -1185,7 +1185,13 @@ const ACCOUNT_SCOPED_KEYS = ["products", "suppliers", "customers", "purchases", 
    لما توصل نسخة من السحابة أو قبل ما نرفع، بندمج: الأحدث بيربح، وما في جهاز بيمسح شغل جهاز ثاني. */
 var SYNC_KEYS_SET = new Set(["products", "suppliers", "customers", "purchases", "sales", "expenses", "vouchers", "manualCash", "checks", "capital", "warehouses", "warehouseEntries", "employees", "employeeTx", "damagedGoods", "issuedChecks"]);
 const TOMB_KEEP_MS = 120 * 864e5;
-function syncRecJson(x) { const r = { ...x }; delete r._m; return JSON.stringify(r); }
+// مقارنة بترتيب ثابت للحقول (السحابة بترجّع الحقول بترتيب مختلف)
+function stableStr(v) {
+  if (v === null || typeof v !== "object") return JSON.stringify(v === undefined ? null : v);
+  if (Array.isArray(v)) return "[" + v.map((x) => (x === undefined ? "null" : stableStr(x))).join(",") + "]";
+  return "{" + Object.keys(v).filter((k) => v[k] !== undefined).sort().map((k) => JSON.stringify(k) + ":" + stableStr(v[k])).join(",") + "}";
+}
+function syncRecJson(x) { const r = { ...x }; delete r._m; delete r.accountId; return stableStr(r); }
 function syncLoadTombs() { try { return JSON.parse(localStorage.getItem(LS_PREFIX + "syncTombs") || "{}") || {}; } catch (e) { return {}; } }
 function syncSaveTombs(t) {
   const lim = Date.now() - TOMB_KEEP_MS;
@@ -1249,7 +1255,7 @@ function syncMergeAccount(accountId, cloud, preferLocalOnTie) {
       const c = cmap.get(l.id);
       const p = decide(l, c);
       if (!p) return;
-      if (!c || syncRecJson({ ...p, accountId: undefined }) !== syncRecJson({ ...c, accountId: undefined }) || (Number(p._m) || 0) !== (Number(c._m) || 0)) needPush = true;
+      if (!c || syncRecJson(p) !== syncRecJson(c) || (Number(p._m) || 0) !== (Number(c._m) || 0)) needPush = true;
       out.push({ ...p, accountId });
     });
     // سجل بالسحابة انحذف عندنا → لازم نرفع عشان ينحذف هناك
@@ -1340,17 +1346,19 @@ function cloudPushNow() {
   cloudPushInFlight = true;
   updateSyncBadge();
   let mergedSomething = false;
-  db.runTransaction(async (tx) => {
-    const [rd, ad] = [await tx.get(rootRef), await tx.get(accountRef)];
-    // قبل ما نرفع: بندمج اللي بالسحابة (ممكن جهاز ثاني ضاف إشي) عشان ما نمسحه
-    cloudApplyingRemote = true;
+  (async () => {
+    // قبل ما نرفع: بنقرأ نسخة السحابة وبندمجها (ممكن جهاز ثاني ضاف إشي) عشان ما نمسحه.
+    // إذا القراءة ما زبطت (نت ضعيف)، بنرفع عادي — الأجهزة الثانية بتدمج وبترجّع أي إشي ناقص.
     try {
-      if (rd.exists) mergedSomething = syncMergeRoot(rd.data()) || mergedSomething;
-      if (ad.exists) { syncMergeAccount(accId, ad.data(), true); mergedSomething = true; }
-    } finally { cloudApplyingRemote = false; }
-    tx.set(rootRef, cloudSnapshotRoot());
-    tx.set(accountRef, cloudSnapshotAccount(accId));
-  })
+      const [rd, ad] = await Promise.all([rootRef.get(), accountRef.get()]);
+      cloudApplyingRemote = true;
+      try {
+        if (rd.exists) mergedSomething = syncMergeRoot(rd.data()) || mergedSomething;
+        if (ad.exists) { syncMergeAccount(accId, ad.data(), true); mergedSomething = true; }
+      } finally { cloudApplyingRemote = false; }
+    } catch (e) { console.warn("pre-push read skipped", e && e.code); }
+    await Promise.all([rootRef.set(cloudSnapshotRoot()), accountRef.set(cloudSnapshotAccount(accId))]);
+  })()
     .then(() => {
       if (mergedSomething) { bootDB(); render(); }
       cloudPushFailed = false;
@@ -1363,10 +1371,12 @@ function cloudPushNow() {
     .catch((e) => {
       console.error("cloud push failed", e);
       cloudPushFailed = true;
-      const sizeIssue = e && (e.code === "invalid-argument" || /size|exceed|too large|too big/i.test(e.message || ""));
-      flash(sizeIssue
+      const sizeIssue = e && (e.code === "invalid-argument" || /size|too large|too big/i.test(e.message || ""));
+      const quota = e && (e.code === "resource-exhausted" || /quota/i.test(e.message || ""));
+      flash(quota ? "⚠️ وصلنا الحد اليومي المجاني للمزامنة — بياناتك محفوظة على الجهاز وبترتفع لحالها بكرة الصبح"
+        : sizeIssue
         ? "❌ فشلت المزامنة! حجم البيانات كبير جدًا (غالبًا بسبب الصور القديمة) — لازم نصغّرها"
-        : "❌ فشلت المزامنة مع السحابة — تأكد من الاتصال بالإنترنت");
+        : "❌ فشلت المزامنة مع السحابة — تأكد من الاتصال بالإنترنت" + (e && e.code ? ` (${e.code})` : ""));
     })
     .finally(() => { cloudPushInFlight = false; updateSyncBadge(); });
 }
@@ -1419,7 +1429,8 @@ function syncMergeRoot(data) {
   if (data.cloudOwnerPin !== undefined && !loadKey("cloudOwnerPin", null)) localStorage.setItem(LS_PREFIX + "cloudOwnerPin", JSON.stringify(data.cloudOwnerPin));
   return changed;
 }
-let cloudReplaceMode = false; // لما الجهاز ينربط بشركة ثانية: بنستبدل مش بندمج
+let cloudReplaceMode = false;
+let syncEchoPushes = []; // لما الجهاز ينربط بشركة ثانية: بنستبدل مش بندمج
 function cloudApplySnapshot(kind, accountId, data) {
   if (!data || cloudRescueHold) return;
   // لو المستخدم لسه بيبني فاتورة (سلة فيها أصناف) أو واقف في نافذة إدخال بيانات، أجّل التحديث عشان ما نقطعش شغله
@@ -1467,7 +1478,13 @@ function cloudApplySnapshot(kind, accountId, data) {
       }
     });
     bootDB();
-    if (restoredAny || needPush) setTimeout(() => { cloudMarkDirty(accountId || state.activeAccountId, Date.now()); cloudScheduleSync(); }, 0);
+    if (restoredAny || needPush) {
+      // حماية: ما بنعيد الرفع أكثر من 4 مرات بالدقيقة بسبب وصول نسخة من السحابة
+      const now = Date.now();
+      syncEchoPushes = syncEchoPushes.filter((t) => now - t < 60000);
+      if (syncEchoPushes.length < 4) { syncEchoPushes.push(now); setTimeout(() => { cloudMarkDirty(accountId || state.activeAccountId, Date.now()); cloudScheduleSync(); }, 0); }
+      else console.warn("sync echo push suppressed");
+    }
     render();
   } finally {
     cloudApplyingRemote = false;
