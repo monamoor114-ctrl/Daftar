@@ -1792,7 +1792,7 @@ async function authAfterSignIn(u) {
     }
   } catch (e) {
     console.error("auth link failed", e);
-  } finally { authLinking = false; render(); }
+  } finally { authLinking = false; try { repStartInbox(); } catch (e) {} render(); }
 }
 // تنزيل كل بيانات الشركة من السحابة لهالجهاز
 async function cloudPullCompany(linkId) {
@@ -2544,6 +2544,15 @@ function repOpenCollect() {
   state.modal = { type: "repCollect" };
   render();
 }
+function repResolveCustField(fieldId) {
+  const el = document.getElementById(fieldId); const rep = currentRep();
+  if (!el || !rep) return;
+  const c = repCollectCustomers(rep).find((o) => normName(o.name) === normName(el.value));
+  const id = c ? c.id : "";
+  if (fieldId === "rep-collect-customer") { if (state._repCollectCustId === id) return; state._repCollectCustId = id; }
+  else { if (state._repStmtCustId === id) return; state._repStmtCustId = id; }
+  render();
+}
 function repCollectCustomers(rep) {
   if (REP_MODE) return scoped("customers");
   const myCustIds = new Set(scoped("sales").filter((s) => s.repId === rep.id && s.customerId).map((s) => s.customerId));
@@ -2559,7 +2568,7 @@ function repCollectModalHtml() {
   const selected = options.find((c) => c.id === state._repCollectCustId);
   return `<div class="modal-title-row"><h3>💰 تسجيل تحصيل</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     ${options.length === 0 ? `<div class="row-sub" style="color:var(--stamp);margin-bottom:10px;">لسه ما بعتش لحد — التحصيل بيبقى متاح بعد أول فاتورة بيع لعميل.</div>` : ""}
-    ${fieldSelect("rep-collect-customer", "العميل (من عملائك بس)", options, state._repCollectCustId, "اختر عميل")}
+    ${suggestFieldHtml("rep-collect-customer", options, state._repCollectCustId, "العميل — اكتب اسمه", "اكتب اسم العميل...", "repResolveCustField")}
     ${selected ? `<div class="row-sub" style="margin-bottom:10px;">رصيده الحالي: <strong class="mono">${fmt(customerBalance(selected))}</strong></div>` : ""}
     <label class="field"><span class="lbl">المبلغ</span><input type="text" inputmode="decimal" class="mono" value="${esc(state._repCollectAmount || "")}" oninput="state._repCollectAmount=this.value;" /></label>
     <div class="row-flex" style="margin-bottom:14px;">
@@ -2624,7 +2633,7 @@ function repStatementModalHtml() {
       </div>`;
   }
   return `<div class="modal-title-row"><h3>📋 كشف حساب عميل</h3><button class="close-x" onclick="closeModal()">✕</button></div>
-    ${options.length === 0 ? `<div class="row-sub" style="color:var(--stamp);">لسه ما بعتش لحد — الكشف بيبقى متاح بعد أول فاتورة بيع لعميل.</div>` : fieldSelect("rep-stmt-customer", "اختار العميل", options, selectedId, "اختر عميل")}
+    ${options.length === 0 ? `<div class="row-sub" style="color:var(--stamp);">لسه ما بعتش لحد — الكشف بيبقى متاح بعد أول فاتورة بيع لعميل.</div>` : suggestFieldHtml("rep-stmt-customer", options, selectedId, "العميل — اكتب اسمه", "اكتب اسم العميل...", "repResolveCustField")}
     ${body}`;
 }
 /* ===================== تسليم الكاش (مندوب ↔ مالك) ===================== */
@@ -3683,8 +3692,6 @@ function deleteSale(id) {
 document.addEventListener("change", (e) => {
   // ملحوظة: "sale-customer" بقى حقل بحث (datalist)، بيتعامل معاه resolveDatalistCustomer بدل هنا
   // ملحوظة: "purchase-supplier" بقى حقل بحث (datalist)، بيتعامل معاه resolveDatalistPurchaseSupplier بدل هنا
-  if (e.target.id === "rep-collect-customer") { state._repCollectCustId = e.target.value; render(); }
-  if (e.target.id === "rep-stmt-customer") { state._repStmtCustId = e.target.value; render(); }
 });
 
 /* ===================== PURCHASES SCREEN ===================== */
@@ -6651,7 +6658,7 @@ function scannerModalHtml() {
    فيها بس اللي مسموحله يشوفه. المندوب بيكتب حركاته بـ "صندوق وارد" (repInbox)، وتطبيق صاحب الشركة بياخذها ويضيفها. */
 const REP_TRACK_KEYS = ["sales", "vouchers", "checks", "purchases", "warehouseEntries", "customers", "cashHandovers", "products", "suppliers"];
 const REP_DATA_KEYS = ["products", "customers", "suppliers", "sales", "vouchers", "checks", "purchases", "warehouses", "warehouseEntries"];
-let repApplying = false;
+var repApplying = false;
 function repEmailOf(u) { return String((u && u.email) || "").trim().toLowerCase(); }
 function repMeta() { return loadKey("repMeta", null); }
 function repOutbox() { return loadKey("repOutbox", []) || []; }
@@ -6679,7 +6686,7 @@ function repRecordDiff(key, next) {
   repSetOutbox(o);
   setTimeout(repFlush, 400);
 }
-let repFlushing = false;
+var repFlushing = false;
 async function repFlush() {
   if (!REP_MODE || repFlushing) return;
   const meta = repMeta(); const db = cloudInit();
@@ -6731,7 +6738,7 @@ function repApplyView(v) {
   state.activeAccountId = acc;
   render();
 }
-let repUnsub = null;
+var repUnsub = null;
 async function repModeStart(u) {
   state.repUser = u;
   const meta = repMeta();
@@ -6892,8 +6899,8 @@ function buildRepView(rep, mergedOps) {
   };
 }
 function repHash(str) { let h = 0; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0; return h + ":" + str.length; }
-const repPublishedHash = {};
-let repPublishTimer = null;
+var repPublishedHash = {};
+var repPublishTimer = null;
 function scheduleRepPublish(delay) { if (REP_MODE) return; clearTimeout(repPublishTimer); repPublishTimer = setTimeout(publishRepViews, delay == null ? 1500 : delay); }
 async function publishRepViews() {
   if (REP_MODE || cloudRescueHold) return;
@@ -6921,20 +6928,19 @@ async function publishRepViews() {
     }
   }
 }
-let repInboxUnsub = null;
+var repInboxUnsub = null; var repInboxRetry = null;
 function repStartInbox() {
   if (REP_MODE) return;
   const db = cloudInit(); const linkId = cloudGetLinkId();
   if (!db || !linkId) return;
-  if (!(loadKey("reps", []) || []).some((r) => r.email)) return;
   if (repInboxUnsub) repInboxUnsub();
   repInboxUnsub = db.collection("daftar_accounts").doc(linkId).collection("repInbox").onSnapshot((snap) => {
     const docs = []; snap.forEach((d) => docs.push(d));
     if (docs.length) repMergeInbox(docs);
-  }, (e) => { console.error("rep inbox listen failed", e); if (e && e.code === "permission-denied") { state.repRulesMissing = true; render(); } });
+  }, (e) => { console.error("rep inbox listen failed", e); repInboxUnsub = null; clearTimeout(repInboxRetry); repInboxRetry = setTimeout(() => { try { repStartInbox(); } catch (x) {} }, 20000); });
   scheduleRepPublish(500);
 }
-let repMerging = false;
+var repMerging = false;
 async function repMergeInbox(docs) {
   if (repMerging) return;
   repMerging = true;
