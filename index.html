@@ -1741,19 +1741,8 @@ async function authAfterSignIn(u) {
     try {
       const ri = await db.collection("daftar_repIndex").doc(repEmailOf(u)).get();
       if (ri.exists && ri.data().linkId && ri.data().ownerUid !== u.uid) {
-        let ownsOther = false;
-        const myLink = snap.exists ? snap.data().linkId : null;
-        if (myLink && myLink !== ri.data().linkId) {
-          try {
-            const acc = await db.collection("daftar_accounts").doc(myLink).get();
-            const d = acc.exists ? acc.data() : null;
-            ownsOther = !!(d && Array.isArray(d.accounts) && d.accounts.length > 1);
-          } catch (e) {}
-        }
-        if (!ownsOther) {
-          if (localLink && localLink !== myLink) wipeLocalCompanyData();
-          repEnterMode(u, ri.data()); return;
-        }
+        wipeLocalCompanyData();
+        repEnterMode(u, ri.data()); return;
       }
     } catch (e) { console.warn("rep index check skipped", e && e.code); }
     // إذا على الجهاز بيانات شركة شخص ثاني (مثلاً صاحب الشركة فتح من جوال المندوب): بنمسحها من الجهاز وبنكمل كأنه جهاز جديد
