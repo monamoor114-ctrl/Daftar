@@ -2913,7 +2913,8 @@ function suggestUpdate(fieldId) {
   if (!rows.length) { box.style.display = "none"; return; }
   box.innerHTML = rows.join("");
   box.style.display = "block";
-  try { setTimeout(() => el.scrollIntoView({ block: "start", behavior: "smooth" }), 250); } catch (e) {}
+  // نحرّك الشاشة مرة وحدة بس لما تبلش تكتب — مش مع كل حرف (كانت الشاشة تهز)
+  if (!cfg._scrolled) { cfg._scrolled = true; try { setTimeout(() => el.scrollIntoView({ block: "start", behavior: "auto" }), 250); } catch (e) {} }
 }
 function suggestPick(fieldId, idx) {
   const cfg = SUGGEST[fieldId]; const el = document.getElementById(fieldId);
@@ -2925,6 +2926,7 @@ function suggestPick(fieldId, idx) {
 }
 function suggestBlur(fieldId) {
   const cfg = SUGGEST[fieldId]; const el = document.getElementById(fieldId);
+  if (cfg && document.activeElement !== el) cfg._scrolled = false;
   const box = document.getElementById(fieldId + "-sug"); if (box) box.style.display = "none";
   if (!cfg || !el || document.activeElement === el) return;
   window[cfg.onResolve](fieldId);
@@ -3050,8 +3052,15 @@ function selectPurchaseSupplier(id) { state.purchaseForm.supplierId = id; state.
 // النوافذ الصغيرة اللي بتنفتح من جوّا الفاتورة (الكاميرا، حاسبة السعر، صنف جديد) بترجع للفاتورة لما تتسكّر
 function cartModalNow() { return state.modal && (state.modal.type === "saleCart" || state.modal.type === "purchaseCart") ? state.modal.type : null; }
 function closeModal() {
-  const back = state.modal && state.modal._returnTo;
-  state.modal = back ? { type: back } : null;
+  if (state.modal && state.modal.type === "scan") { try { stopScanner(); } catch (e) {} }
+  let back = state.modal && state.modal._returnTo;
+  // سكّرنا الكاميرا من غير ما نصوّر: نرجع لنفس الشاشة اللي كنا فيها، مع اللي كان مكتوب
+  if (state.modal && state.modal.type === "scan" && state.modal.context === "field" && pendingCapture && back && typeof back === "object") {
+    const cap = pendingCapture; pendingCapture = null;
+    if (cap.kind === "product" && back.type === "product") back = { ...back, product: { ...(back.product || {}), ...cap.vals, barcode: (back.product || {}).barcode || "" } };
+    else if (cap.kind === "newItem" && back.type === "newItem") back = { ...back, name: cap.vals.name };
+  }
+  state.modal = back ? (typeof back === "object" ? back : { type: back }) : null;
   render(); applyPendingCloudSnapshotIfSafe();
 }
 /* ===== زر الرجوع تبع الجوال: يرجع خطوة لورا بدل ما يطلع من التطبيق ===== */
@@ -4032,7 +4041,8 @@ function saveNewItem() {
 let scannerStream = null;
 let pendingCapture = null; // { kind: 'product'|'newItem', vals }
 function openScanModal(context) {
-  state.modal = { type: "scan", context, _returnTo: cartModalNow(), onDetect: (code) => handleScanResult(context, code) };
+  const prev = state.modal && state.modal.type !== "scan" ? { ...state.modal } : (state.modal && state.modal._returnTo) || null;
+  state.modal = { type: "scan", context, _returnTo: prev, onDetect: (code) => handleScanResult(context, code) };
   render();
 }
 function scanIntoBarcodeField() {
@@ -5173,6 +5183,13 @@ function addTransferCartItem() {
   if (!product || qty <= 0) { flash("اختار صنف وحط كمية أول"); return; }
   if (!state._transferCart) state._transferCart = [];
   const existing = state._transferCart.find((c) => c.productId === productId);
+  {
+    const isIn = state._whEntryType === "transfer_in";
+    const whId = state.modal && state.modal.id;
+    const avail = isIn ? (Number(product.stock) || 0) : scoped("warehouseEntries").filter((e) => e.warehouseId === whId && e.productName === product.name).reduce((a, e) => a + (e.type === "in" ? e.qty : -e.qty), 0);
+    const want = qty + (existing ? existing.qty : 0);
+    if (want > avail + 1e-9) { flash(`❌ ما بينفع — المتوفر ${isIn ? "بالمحل" : "بالمستودع"} من "${product.name}" بس ${fmt(avail)}${existing ? ` (وضايف منه ${fmt(existing.qty)})` : ""}`); return; }
+  }
   if (existing) existing.qty += qty;
   else state._transferCart.push({ productId, name: product.name, qty });
   state._transferScannedProductId = null;
