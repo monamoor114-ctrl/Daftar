@@ -2473,7 +2473,7 @@ function renderRepDashboard() {
   const myHandoversToday = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === rep.id && new Date(h.ts).toDateString() === todayStr0);
   const handedOverToday = myHandoversToday.filter((h) => h.status !== "rejected").reduce((a, h) => a + h.amount, 0);
   const pendingHandover = myHandoversToday.find((h) => h.status === "pending");
-  const cashToday = cashSalesToday + cashVouchersToday - handedOverToday;
+  const cashToday = Math.max(0, cashSalesToday + cashVouchersToday - handedOverToday);
   const perms = repPermissions(rep);
   return `<div style="min-height:100vh;background:var(--paper);padding-bottom:80px;">
     <div style="background:var(--greenDark);color:#fff;padding:16px;display:flex;justify-content:space-between;align-items:center;">
@@ -2654,7 +2654,7 @@ function repHandoverModalHtml() {
   const cashVouchersToday = myVouchers.filter((v) => v.method !== "check" && new Date(v.ts).toDateString() === todayStr0).reduce((a, v) => a + (v.cashAmount ?? v.amount), 0);
   const myHandoversToday = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === rep.id && new Date(h.ts).toDateString() === todayStr0 && h.status !== "rejected");
   const handedOverToday = myHandoversToday.reduce((a, h) => a + h.amount, 0);
-  const cashToday = cashSalesToday + cashVouchersToday - handedOverToday;
+  const cashToday = Math.max(0, cashSalesToday + cashVouchersToday - handedOverToday);
   return `<div class="modal-title-row"><h3>📤 تسليم الكاش</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <div class="card" style="padding:16px;text-align:center;background:var(--greenLight);margin-bottom:14px;">
       <div class="row-sub">المبلغ اللي معاك دلوقتي</div>
@@ -2678,7 +2678,7 @@ function confirmHandover(handoverId) {
   if (!h || h.status !== "pending") return;
   h.status = "confirmed"; h.confirmedAt = new Date().toISOString();
   saveKey("cashHandovers", handovers);
-  addScoped("manualCash", { id: uid(), ts: new Date().toISOString(), type: "in", amount: h.amount, desc: `تسليم كاش من المندوب: ${h.repName}` });
+  addScoped("manualCash", { id: uid(), ts: new Date().toISOString(), type: "in", amount: h.amount, desc: `تسليم كاش من المندوب: ${h.repName}`, handoverId: h.id });
   flash(`تم تأكيد استلام ${fmt(h.amount)} من ${h.repName}`);
   render();
   scheduleRepPublish(500);
@@ -4616,6 +4616,14 @@ function renderCashbox() {
     </div>
   </div>
   <div class="card" style="padding:14px;margin-bottom:14px;">
+    <div class="row-title" style="margin-bottom:10px;">📋 كشف النقدية</div>
+    <div class="grid2" style="margin-bottom:10px;">
+      <label class="field" style="margin:0;"><span class="lbl">من</span><input id="cs-from" type="date" value="${esc(state._csFrom || cashStmtDefaultFrom())}" onchange="state._csFrom=this.value" /></label>
+      <label class="field" style="margin:0;"><span class="lbl">إلى</span><input id="cs-to" type="date" value="${esc(state._csTo || todayISO())}" onchange="state._csTo=this.value" /></label>
+    </div>
+    <button class="btn btn-green btn-block" onclick="printCashStatement()">🖨 عرض / طباعة الكشف</button>
+  </div>
+  <div class="card" style="padding:14px;margin-bottom:14px;">
     <div class="row-title" style="margin-bottom:10px;">💵 حركة نقدية يدوية</div>
     <div class="row-flex" style="margin-bottom:10px;">
       <button class="btn ${state._cbDir !== "out" ? "btn-green" : "btn-ghost"} flex1" onclick="state._cbDir='in';render();">إضافة للصندوق</button>
@@ -4693,10 +4701,13 @@ function renderCashbox() {
     }, "")}
   </div>
   ${issuedChecksSectionHtml()}
-  <div class="section-title">آخر الحركات النقدية</div>`;
+  <div class="flex-between" style="margin-bottom:8px;">
+    <div class="section-title" style="margin:0;">${state._cbAll ? "كل الحركات النقدية" : "آخر الحركات النقدية"}</div>
+    ${ledger.length > 20 ? `<button class="btn btn-ghost" style="font-size:11px;padding:5px 10px;" onclick="state._cbAll=!state._cbAll;render();">${state._cbAll ? "آخر 20 بس" : "عرض الكل (" + ledger.length + ")"}</button>` : ""}
+  </div>`;
   if (ledger.length === 0) html += emptyState("لا توجد حركات بعد", true);
   else {
-    html += `<div>` + ledger.slice(0, 20).map((e) => `<div class="card" style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:8px;">
+    html += `<div>` + (state._cbAll ? ledger : ledger.slice(0, 20)).map((e) => `<div class="card" style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:8px;">
       <span>${e.type === "in" ? "⬇️" : "⬆️"}</span>
       <div class="flex1"><div class="truncate" style="font-size:12.5px;">${esc(e.desc)}</div><div class="mono row-sub">${fmtDateTime(e.ts)}</div></div>
       <span class="mono" style="font-weight:700;color:${e.type === "in" ? "var(--green)" : "var(--stamp)"};">${e.type === "in" ? "+" : "-"}${fmt(e.amount)}</span>
@@ -4759,7 +4770,15 @@ function saveManualCash() {
   flash("تم تحديث الصندوق");
   render();
 }
-function deleteManualCash(rawId) { if (!confirm("متأكد إنك بدك تمسح الحركة هاي؟ ما في رجعة بعد الحذف.")) return; persistScoped("manualCash", scoped("manualCash").filter((m) => m.id !== rawId)); flash("تم حذف الحركة"); render(); }
+function deleteManualCash(rawId) { if (!confirm("متأكد إنك بدك تمسح الحركة هاي؟ ما في رجعة بعد الحذف.")) return;
+  const m0 = scoped("manualCash").find((m) => m.id === rawId);
+  if (m0 && String(m0.desc || "").startsWith("تسليم كاش من المندوب")) {
+    // نلغي التسليم كمان عشان "كاش اليوم" عند المندوب يرجع صح
+    const hs = loadKey("cashHandovers", []) || [];
+    const h = m0.handoverId ? hs.find((x) => x.id === m0.handoverId) : hs.find((x) => x.status === "confirmed" && Math.abs(x.amount - m0.amount) < 1e-9 && m0.desc.endsWith(x.repName || "\u0000"));
+    if (h) { h.status = "rejected"; saveKey("cashHandovers", hs); scheduleRepPublish(500); }
+  }
+  persistScoped("manualCash", scoped("manualCash").filter((m) => m.id !== rawId)); flash("تم حذف الحركة"); render(); }
 
 /* ===================== INVENTORY ===================== */
 function renderInventory() {
@@ -5886,6 +5905,36 @@ function printPartyStatement(kind, partyId) {
     <div style="display:flex;justify-content:space-between;font-weight:700;font-size:14px;border-top:1px dashed #999;padding-top:6px;"><span>الرصيد الحالي${otherParty ? " (الصافي)" : ""}</span><span>${fmt(Math.abs(running))} ${esc(settings.currency)} ${running >= 0 ? "عليه" : "له"}</span></div>`;
   showPrint(html);
 }
+function todayISO() { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+function cashStmtDefaultFrom() { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-01"; }
+function printCashStatement() {
+  const settings = currentSettings();
+  const fromStr = (document.getElementById("cs-from") || {}).value || state._csFrom || cashStmtDefaultFrom();
+  const toStr = (document.getElementById("cs-to") || {}).value || state._csTo || todayISO();
+  const from = new Date(fromStr + "T00:00:00"), to = new Date(toStr + "T23:59:59");
+  if (from > to) { flash("تاريخ البداية بعد تاريخ النهاية"); return; }
+  const all = cashLedger().slice().sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  const sign = (e) => (e.type === "in" ? e.amount : -e.amount);
+  const opening = all.filter((e) => new Date(e.ts) < from).reduce((a, e) => a + sign(e), 0);
+  const rows = all.filter((e) => { const t = new Date(e.ts); return t >= from && t <= to; });
+  let run = opening, tin = 0, tout = 0;
+  const body = rows.map((e) => {
+    run += sign(e); if (e.type === "in") tin += e.amount; else tout += e.amount;
+    return `<tr style="border-bottom:1px dotted #ccc;page-break-inside:avoid;break-inside:avoid;"><td style="text-align:right;padding:4px 0;white-space:nowrap;">${fmtDate(e.ts)}</td><td style="text-align:right;padding:4px 4px;">${esc(e.desc || "")}</td><td style="text-align:left;color:#1d6b35;">${e.type === "in" ? fmt(e.amount) : ""}</td><td style="text-align:left;color:#a33;">${e.type === "out" ? fmt(e.amount) : ""}</td><td style="text-align:left;font-weight:700;">${fmt(run)}</td></tr>`;
+  }).join("");
+  const html = `${printHead(settings)}
+    <div style="text-align:center;font-weight:700;font-size:13px;margin-bottom:4px;">كشف النقدية</div>
+    <div style="text-align:center;font-size:11px;margin-bottom:10px;">من ${fmtDate(from)} إلى ${fmtDate(to)}</div>
+    <div style="display:flex;justify-content:space-between;font-size:11.5px;font-weight:700;border-bottom:1px solid #999;padding-bottom:4px;margin-bottom:4px;"><span>الرصيد أول المدة</span><span>${fmt(opening)} ${esc(settings.currency)}</span></div>
+    <table style="width:100%;font-size:10.5px;border-collapse:collapse;"><thead><tr style="border-bottom:1px solid #999;"><th style="text-align:right;">التاريخ</th><th style="text-align:right;">البيان</th><th style="text-align:left;">داخل</th><th style="text-align:left;">طالع</th><th style="text-align:left;">الرصيد</th></tr></thead>
+    <tbody>${body || `<tr><td colspan="5" style="color:#888;padding:6px 0;">لا توجد حركات بهالفترة</td></tr>`}</tbody></table>
+    <div style="border-top:1px solid #999;margin-top:6px;padding-top:4px;font-size:11.5px;">
+      <div style="display:flex;justify-content:space-between;"><span>مجموع الداخل</span><span>${fmt(tin)}</span></div>
+      <div style="display:flex;justify-content:space-between;"><span>مجموع الطالع</span><span>${fmt(tout)}</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700;font-size:12.5px;margin-top:3px;"><span>الرصيد آخر المدة</span><span>${fmt(run)} ${esc(settings.currency)}</span></div>
+    </div>`;
+  showPrint(html);
+}
 function printChecksStatement() {
   const settings = currentSettings();
   const checks = scoped("checks");
@@ -6902,8 +6951,22 @@ function repHash(str) { let h = 0; for (let i = 0; i < str.length; i++) h = (h *
 var repPublishedHash = {};
 var repPublishTimer = null;
 function scheduleRepPublish(delay) { if (REP_MODE) return; clearTimeout(repPublishTimer); repPublishTimer = setTimeout(publishRepViews, delay == null ? 1500 : delay); }
+function repReconcileHandovers() {
+  if (REP_MODE) return false;
+  const hs = loadKey("cashHandovers", []) || [];
+  const mc = DB.manualCash || [];
+  const used = new Set(); let changed = false;
+  hs.filter((h) => h.status === "confirmed").forEach((h) => {
+    let m = mc.find((x) => x.handoverId === h.id);
+    if (!m) m = mc.find((x) => !x.handoverId && !used.has(x.id) && x.type === "in" && Math.abs((Number(x.amount) || 0) - h.amount) < 1e-9 && String(x.desc || "") === "تسليم كاش من المندوب: " + (h.repName || ""));
+    if (m) used.add(m.id); else { h.status = "rejected"; h.removedFromCash = true; changed = true; }
+  });
+  if (changed) saveKey("cashHandovers", hs);
+  return changed;
+}
 async function publishRepViews() {
   if (REP_MODE || cloudRescueHold) return;
+  try { repReconcileHandovers(); } catch (e) {}
   const db = cloudInit(); const linkId = cloudGetLinkId();
   let u = null; try { u = window.firebase.auth().currentUser; } catch (e) {}
   if (!db || !linkId || !u || !navigator.onLine) return;
