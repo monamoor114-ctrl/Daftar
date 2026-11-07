@@ -150,7 +150,7 @@ const I18N_EN = {
 "اكتب رقم سري": "Enter a PIN",
 "تم تحديث الرقم السري": "PIN updated",
 "تعذّر الاتصال بالسحابة": "Couldn't connect to the cloud",
-"الرمز غير صحيح — تأكد من الرمز اللي أعطاك إياه صاحب الشركة": "Wrong code — check the code the business owner gave you",
+"الرمز غير صحيح — تأكد من الرمز اللي أعطوك إياه": "Wrong code — check the code the business owner gave you",
 "الرقم السري غير صحيح": "Wrong PIN",
 "حصل خطأ": "An error occurred",
 "غير معروف": "Unknown",
@@ -259,7 +259,7 @@ const I18N_EN = {
 "جاري النقل": "Moving",
 "نقل الصور القديمة من السحابة للجهاز": "Move old photos from the cloud to the device",
 "دخول دفتر": "Daftar sign-in",
-"صاحب الشركة أو مندوب — نفس الشاشة": "Owner or rep — same screen",
+"الحساب الرئيسي أو مندوب — نفس الشاشة": "Owner or rep — same screen",
 "الرقم السري بتاعك": "Your PIN",
 "حط الرمز والرقم السري": "Enter the code and PIN",
 "الرمز أو الرقم السري غلط": "Wrong code or PIN",
@@ -267,9 +267,9 @@ const I18N_EN = {
 "مستودع خاص": "Private warehouse",
 "خروج": "Exit",
 "كاش اليوم معي": "Cash with me today",
-"في انتظار تأكيد صاحب الشركة": "Waiting for owner confirmation",
+"في انتظار تأكيد الحساب الرئيسي": "Waiting for owner confirmation",
 "طلبت تسليم": "Requested handover of",
-"تسليم الكاش لصاحب الشركة": "Hand cash to the owner",
+"تسليم الكاش للحساب الرئيسي": "Hand cash to the owner",
 "تسجيل بيع": "New sale",
 "تسجيل تحصيل": "New collection",
 "تسجيل شراء": "New purchase",
@@ -309,11 +309,11 @@ const I18N_EN = {
 "اختار العميل": "Choose the customer",
 "تسليم الكاش": "Cash handover",
 "المبلغ اللي معاك دلوقتي": "Amount you have now",
-"بعد ما تدوس تأكيد، هيوصل طلب لصاحب الشركة إنك سلّمته": "After you confirm, the owner gets a request saying you handed over",
+"بعد ما تدوس تأكيد، هيوصل طلب للحساب الرئيسي إنك سلّمته": "After you confirm, the owner gets a request saying you handed over",
 "دينار كاش — وهو اللي هيأكّد استلامه": "JOD in cash — they will confirm receipt",
 "تأكيد طلب التسليم": "Confirm handover request",
 "مفيش كاش تسلمه دلوقتي": "No cash to hand over now",
-"تم إرسال طلب التسليم — في انتظار تأكيد صاحب الشركة": "Handover request sent — waiting for owner confirmation",
+"تم إرسال طلب التسليم — في انتظار تأكيد الحساب الرئيسي": "Handover request sent — waiting for owner confirmation",
 "تسليم كاش من المندوب": "Cash handover from rep",
 "تم تأكيد استلام": "Receipt confirmed",
 "تم رفض الطلب": "Request rejected",
@@ -1558,7 +1558,7 @@ async function cloudTryLogin(linkId, pin) {
   try {
     const rootRef = db.collection("daftar_accounts").doc(linkId);
     const doc = await rootRef.get();
-    if (!doc.exists) { flash("الرمز غير صحيح — تأكد من الرمز اللي أعطاك إياه صاحب الشركة"); return false; }
+    if (!doc.exists) { flash("الرمز غير صحيح — تأكد من الرمز اللي أعطوك إياه"); return false; }
     const rootData = doc.data();
     if (rootData.cloudOwnerPin && pin === rootData.cloudOwnerPin) {
       cloudSetLinkId(linkId);
@@ -2434,7 +2434,7 @@ function renderRepLogin() {
     <div class="card" style="max-width:360px;width:100%;padding:24px;">
       <div style="text-align:center;font-size:34px;margin-bottom:6px;">📖</div>
       <h2 style="text-align:center;margin:0 0 6px;">دخول دفتر</h2>
-      <div class="row-sub" style="text-align:center;margin-bottom:16px;">صاحب الشركة أو مندوب — نفس الشاشة</div>
+      <div class="row-sub" style="text-align:center;margin-bottom:16px;">الحساب الرئيسي أو مندوب — نفس الشاشة</div>
       <label class="field"><span class="lbl">رمز الشركة</span><input id="rep-linkid" class="mono" value="${esc(state._repLinkIdInput || "")}" oninput="state._repLinkIdInput=this.value;" /></label>
       <label class="field"><span class="lbl">الرقم السري بتاعك</span><input id="rep-pin" type="text" inputmode="numeric" class="mono" value="${esc(state._repPinInput || "")}" oninput="state._repPinInput=this.value;" /></label>
       ${err ? `<div class="row-sub" style="color:var(--stamp);margin-bottom:10px;">${esc(err)}</div>` : ""}
@@ -2487,9 +2487,9 @@ function renderRepDashboard() {
         <div class="mono" style="font-weight:700;font-size:20px;color:var(--green);">${fmt(cashToday)} ${esc(settings.currency)}</div>
       </div>
       ${pendingHandover ? `<div class="card" style="padding:10px 12px;text-align:center;background:var(--goldLight);border:1.5px solid var(--gold);margin-bottom:14px;">
-        <div class="row-sub" style="color:#5B4B1F;font-weight:700;">⏳ في انتظار تأكيد صاحب الشركة</div>
+        <div class="row-sub" style="color:#5B4B1F;font-weight:700;">⏳ في انتظار تأكيد الحساب الرئيسي</div>
         <div class="mono" style="font-size:13px;color:#5B4B1F;">طلبت تسليم ${fmt(pendingHandover.amount)}</div>
-      </div>` : cashToday > 0 ? `<button class="btn btn-gold btn-block" style="margin-bottom:14px;padding:12px;" onclick="repOpenHandover()">📤 تسليم الكاش لصاحب الشركة</button>` : ""}
+      </div>` : cashToday > 0 ? `<button class="btn btn-gold btn-block" style="margin-bottom:14px;padding:12px;" onclick="repOpenHandover()">📤 تسليم الكاش للحساب الرئيسي</button>` : ""}
       <div class="row-flex" style="gap:8px;margin-bottom:8px;">
         ${perms.sale ? `<button class="btn btn-green flex1" style="padding:14px 6px;font-size:13px;" onclick="repOpenSale()">➕ تسجيل بيع</button>` : ""}
         ${perms.collect ? `<button class="btn btn-gold flex1" style="padding:14px 6px;font-size:13px;" onclick="repOpenCollect()">💰 تسجيل تحصيل</button>` : ""}
@@ -2651,7 +2651,7 @@ function repHandoverModalHtml() {
       <div class="row-sub">المبلغ اللي معاك دلوقتي</div>
       <div class="mono" style="font-weight:700;font-size:26px;color:var(--green);">${fmt(cashToday)} ${esc(settings.currency)}</div>
     </div>
-    <div class="row-sub" style="margin-bottom:14px;">بعد ما تدوس تأكيد، هيوصل طلب لصاحب الشركة إنك سلّمته ${fmt(cashToday)} دينار كاش — وهو اللي هيأكّد استلامه.</div>
+    <div class="row-sub" style="margin-bottom:14px;">بعد ما تدوس تأكيد، هيوصل طلب للحساب الرئيسي إنك سلّمته ${fmt(cashToday)} دينار كاش — وهو اللي هيأكّد استلامه.</div>
     <button class="btn btn-green btn-block" onclick="repSubmitHandover(${cashToday})">تأكيد طلب التسليم</button>`;
 }
 function repSubmitHandover(amount) {
@@ -2660,7 +2660,7 @@ function repSubmitHandover(amount) {
   const handovers = loadKey("cashHandovers", []) || [];
   handovers.push({ id: uid(), repId: rep.id, repName: rep.name, amount, ts: new Date().toISOString(), status: "pending" });
   saveKey("cashHandovers", handovers);
-  flash("تم إرسال طلب التسليم — في انتظار تأكيد صاحب الشركة");
+  flash("تم إرسال طلب التسليم — في انتظار تأكيد الحساب الرئيسي");
   closeModal();
 }
 function confirmHandover(handoverId) {
@@ -6779,7 +6779,7 @@ async function repResendVerify() {
 }
 function repModeExit() {
   const unsent = repOutbox().filter((o) => !o.sent).length;
-  if (unsent && !confirm(`في ${unsent} حركة لسه ما انبعتت لصاحب الشركة. إذا طلعت هلأ رح تضيع. متأكد؟`)) return;
+  if (unsent && !confirm(`في ${unsent} حركة لسه ما انبعتت للحساب الرئيسي. إذا طلعت هلأ رح تضيع. متأكد؟`)) return;
   if (!unsent && !confirm("متأكد بدك تسجّل خروج؟")) return;
   try { window.firebase.auth().signOut(); } catch (e) {}
   try {
@@ -6813,16 +6813,16 @@ function renderRepStatusScreen() {
   } else if (st === "removed") {
     body = `<div style="font-size:34px;text-align:center;">🚫</div>
       <h2 style="text-align:center;margin:6px 0;">حسابك كمندوب مش مفعّل</h2>
-      <div class="row-sub" style="text-align:center;margin-bottom:14px;">صاحب الشركة شال إيميلك من المندوبين. تواصل معه.</div>`;
+      <div class="row-sub" style="text-align:center;margin-bottom:14px;">إيميلك انشال من المندوبين. تواصل مع المحل.</div>`;
   } else if (st === "error") {
     body = `<div style="font-size:34px;text-align:center;">📶</div>
       <h2 style="text-align:center;margin:6px 0;">ما قدرنا نوصل للبيانات</h2>
-      <div class="row-sub" style="text-align:center;margin-bottom:14px;">تأكد من الإنترنت. إذا ضلت المشكلة، اطلب من صاحب الشركة يتأكد إنه حدّث قواعد الحماية.</div>
+      <div class="row-sub" style="text-align:center;margin-bottom:14px;">تأكد من الإنترنت. إذا ضلت المشكلة، تواصل مع المحل.</div>
       <button class="btn btn-green btn-block" onclick="location.reload()">إعادة المحاولة</button>`;
   } else {
     body = `<div style="font-size:34px;text-align:center;">⏳</div>
       <h2 style="text-align:center;margin:6px 0;">بانتظار بياناتك</h2>
-      <div class="row-sub" style="text-align:center;margin-bottom:14px;">صاحب الشركة لازم يفتح تطبيق دفتر عنده عشان تنجهز بياناتك (الأصناف والزباين). أول ما تجهز بتطلعلك لحالها.</div>`;
+      <div class="row-sub" style="text-align:center;margin-bottom:14px;">لازم ينفتح تطبيق دفتر على الحساب الرئيسي عشان تنجهز بياناتك (الأصناف والزباين). أول ما تجهز بتطلعلك لحالها.</div>`;
   }
   return `<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--paper);">
     <div class="card" style="max-width:380px;width:100%;padding:24px;">${body}
@@ -6834,8 +6834,8 @@ function repSyncBadgeHtml() {
   const unsent = out.filter((o) => !o.sent).length;
   const waiting = out.filter((o) => o.sent).length;
   if (unsent) return `<div class="card" style="padding:8px 12px;margin-bottom:10px;background:var(--goldLight);font-size:12.5px;">⏳ ${unsent} حركة بانتظار الإنترنت عشان تنبعت <button class="btn btn-ghost" style="padding:2px 8px;font-size:11px;min-height:0;margin-inline-start:6px;" onclick="repFlush()">إرسال</button></div>`;
-  if (waiting) return `<div class="card" style="padding:8px 12px;margin-bottom:10px;background:var(--greenLight);font-size:12.5px;">📤 ${waiting} حركة انبعتت وبانتظار ما يفتح صاحب الشركة التطبيق</div>`;
-  return `<div class="row-sub" style="margin-bottom:10px;color:var(--green);">✅ كل حركاتك واصلة لصاحب الشركة</div>`;
+  if (waiting) return `<div class="card" style="padding:8px 12px;margin-bottom:10px;background:var(--greenLight);font-size:12.5px;">📤 ${waiting} حركة انبعتت وبانتظار الحساب الرئيسي</div>`;
+  return `<div class="row-sub" style="margin-bottom:10px;color:var(--green);">✅ كل حركاتك واصلة للحساب الرئيسي</div>`;
 }
 
 /* ---------- جهاز صاحب الشركة: تجهيز نسخة المندوب واستلام حركاته ---------- */
