@@ -4041,7 +4041,7 @@ function handleScanResult(context, code) {
         price: cap.vals.price, cost: cap.vals.cost, stock: cap.vals.stock, minStock: cap.vals.minStock,
       } };
     } else {
-      const existing = scoped("products").find((p) => p.barcode && p.barcode === code);
+      const existing = scoped("products").find((p) => p.barcode && barcodeMatches(p.barcode, code));
       if (existing) {
         flash(`⚠️ الباركود ده مسجّل أصلاً على صنف اسمه "${existing.name}"`);
         state.modal = { type: "product", product: existing };
@@ -4056,7 +4056,7 @@ function handleScanResult(context, code) {
   if (context === "sale" || context === "purchase") {
     state.modal = { type: context === "sale" ? "saleCart" : "purchaseCart" };
     const products = scoped("products");
-    const found = products.find((p) => p.barcode && p.barcode === code);
+    const found = products.find((p) => p.barcode && barcodeMatches(p.barcode, code));
     if (context === "sale") {
       if (found) { addToCart(found.id); flash("تمت إضافة: " + found.name); }
       else { state._cartQ = code; state._cartAddOpen = true; flash("لم يتم العثور على منتج بهذا الباركود"); render(); }
@@ -4069,7 +4069,7 @@ function handleScanResult(context, code) {
   if (context === "transfer") {
     state.modal = { type: "warehouseDetail", id: state._transferScanWarehouseId };
     const products = scoped("products");
-    const found = products.find((p) => p.barcode && p.barcode === code);
+    const found = products.find((p) => p.barcode && barcodeMatches(p.barcode, code));
     if (found) { state._transferScannedProductId = found.id; flash("لاقيت: " + found.name + " — دلوقتي حط الكمية ودوس إضافة"); }
     else { flash("لم يتم العثور على منتج بهذا الباركود"); }
     render();
@@ -4077,9 +4077,37 @@ function handleScanResult(context, code) {
   }
   closeModal();
   const products = scoped("products");
-  const found = products.find((p) => p.barcode && p.barcode === code);
+  const found = products.find((p) => p.barcode && barcodeMatches(p.barcode, code));
 }
-async function startScanner(onDetect) {
+// مطابقة الباركود مع تسامح بسيط (EAN-13 مقابل UPC-A، ورقم التحقق الأخير)
+function barcodeMatches(saved, code) {
+  saved = String(saved || "").trim(); code = String(code || "").trim();
+  if (!saved || !code) return false;
+  if (saved === code) return true;
+  if (/^\d+$/.test(saved) && /^\d+$/.test(code)) {
+    if (code.length === 13 && code[0] === "0" && code.slice(1) === saved) return true;
+    if (saved.length === 13 && saved[0] === "0" && saved.slice(1) === code) return true;
+    if (code.length === 13 && saved.length === 12 && code.slice(0, 12) === saved) return true;
+  }
+  return false;
+}
+// بنقبل القراءة بس لما تتأكد: إذا طابقت صنف موجود فوراً، وإلا لازم نفس الرقم ينقرا 3 مرات ورا بعض
+function makeScanAcceptor(onDetect) {
+  const known = scoped("products").map((p) => String(p.barcode || "").trim()).filter(Boolean);
+  let last = "", count = 0, done = false;
+  return (raw) => {
+    if (done) return true;
+    const v = String(raw || "").trim();
+    if (!v) return false;
+    const hit = known.find((k) => barcodeMatches(k, v));
+    if (hit) { done = true; onDetect(hit); return true; }
+    if (v === last) count++; else { last = v; count = 1; }
+    if (count >= 3) { done = true; onDetect(v); return true; }
+    return false;
+  };
+}
+async function startScanner(onDetectRaw) {
+  const onDetect = makeScanAcceptor(onDetectRaw);
   const video = document.getElementById("scanner-video");
   const errBox = document.getElementById("scanner-error");
   try {
@@ -4092,9 +4120,17 @@ async function startScanner(onDetect) {
       // بعض الأجهزة (خصوصًا داخل التطبيق) ما فيها قارئ باركود جاهز، فبنحمّل مكتبة بديلة
       try {
         await loadZxing();
-        zxingReader = new window.ZXing.BrowserMultiFormatReader();
+        let hints;
+        try {
+          const Z = window.ZXing; hints = new Map();
+          hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A, Z.BarcodeFormat.UPC_E, Z.BarcodeFormat.CODE_128]);
+        } catch (e) { hints = undefined; }
+        zxingReader = new window.ZXing.BrowserMultiFormatReader(hints);
         zxingReader.decodeFromVideoElementContinuously(video, (result) => {
-          if (result && state.modal && state.modal.type === "scan") { stopZxing(); onDetect(result.getText()); }
+          if (result && state.modal && state.modal.type === "scan") {
+            const t = result.getText();
+            if (onDetect(t)) stopZxing();
+          }
         });
       } catch (e2) {
         console.error("zxing failed", e2);
@@ -4102,12 +4138,14 @@ async function startScanner(onDetect) {
       }
       return;
     }
-    const detector = new window.BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "code_93", "itf", "codabar", "qr_code"] });
+    let fmts = ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"];
+    try { const sup = await window.BarcodeDetector.getSupportedFormats(); fmts = fmts.filter((f) => sup.includes(f)); } catch (e) {}
+    const detector = new window.BarcodeDetector({ formats: fmts });
     const tick = async () => {
       if (!state.modal || state.modal.type !== "scan") return;
       try {
         const codes = await detector.detect(video);
-        if (codes && codes[0]) { onDetect(codes[0].rawValue); return; }
+        for (const c of codes || []) { if (onDetect(c.rawValue)) return; }
       } catch (e) {}
       requestAnimationFrame(tick);
     };
@@ -4772,17 +4810,30 @@ function barcodeLabelsModalHtml() {
         <input type="text" inputmode="numeric" class="mono" style="width:50px;text-align:center;padding:5px;" placeholder="0" value="${state._barcodeQty[p.id] || ""}" oninput="state._barcodeQty['${p.id}']=this.value;" />
       </div>`).join("")}
     </div>
-    <button class="btn btn-gold btn-block" onclick="printBarcodeLabels()">🖨 طباعة الملصقات</button>`;
+    <button class="btn btn-gold btn-block" onclick="printBarcodeLabelsBulk()">🖨 طباعة الملصقات</button>`;
+}
+// بنخلّي الباركود يتصغّر جوّا الملصق بدل ما يطلع برّاه
+function barcodeFormatFor(code) {
+  const c = String(code || "");
+  if (/^\d{13}$/.test(c)) { let sum = 0; for (let i = 0; i < 12; i++) sum += Number(c[i]) * (i % 2 ? 3 : 1); if ((10 - (sum % 10)) % 10 === Number(c[12])) return "EAN13"; }
+  return "CODE128";
+}
+function fitBarcodeSvg(el) {
+  try {
+    const w = parseFloat(el.getAttribute("width")), h = parseFloat(el.getAttribute("height"));
+    if (w && h) { el.setAttribute("viewBox", `0 0 ${w} ${h}`); el.setAttribute("width", "100%"); el.setAttribute("height", "46"); el.setAttribute("preserveAspectRatio", "none"); }
+  } catch (e) {}
 }
 function getOrCreateBarcode(product) {
   if (product.barcode && product.barcode.trim()) return product.barcode.trim();
   let code = "";
-  do { code = "2" + String(Math.floor(Math.random() * 100000000000)).padStart(11, "0"); }
+  const ean13 = (d12) => { let sum = 0; for (let i = 0; i < 12; i++) sum += Number(d12[i]) * (i % 2 ? 3 : 1); return d12 + ((10 - (sum % 10)) % 10); };
+  do { code = ean13("2" + String(Math.floor(Math.random() * 100000000000)).padStart(11, "0")); }
   while (scoped("products").some((p) => p.barcode === code));
   persistScoped("products", scoped("products").map((p) => (p.id === product.id ? { ...p, barcode: code } : p)));
   return code;
 }
-function printBarcodeLabels() {
+function printBarcodeLabelsBulk() {
   const settings = currentSettings();
   const products = scoped("products");
   const items = [];
@@ -4797,17 +4848,13 @@ function printBarcodeLabels() {
   if (items.length === 0) { flash("حط كمية للأصناف اللي عايز تطبعها"); return; }
   const labelsHtml = items.map((it, i) => `
     <div style="width:31%;display:inline-block;border:1px dashed #999;border-radius:6px;padding:8px 4px;margin:4px 1%;text-align:center;page-break-inside:avoid;break-inside:avoid;vertical-align:top;">
-      <div style="font-size:10px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(it.name)}</div>
-      <svg class="barcode-svg" data-value="${esc(it.code)}" style="width:100%;height:40px;"></svg>
-      <div style="font-size:11px;font-weight:700;">${fmt(it.price)} ${esc(settings.currency)}</div>
+      <svg class="barcode-svg" data-value="${esc(it.code)}" style="width:100%;height:46px;"></svg>
     </div>`).join("");
-  const html = `${printHead(settings)}
-    <div style="text-align:center;font-weight:700;font-size:13px;margin-bottom:10px;">ملصقات باركود</div>
-    <div>${labelsHtml}</div>`;
+  const html = `<div>${labelsHtml}</div>`;
   showPrint(html);
   setTimeout(() => {
     document.querySelectorAll(".barcode-svg").forEach((el) => {
-      try { window.JsBarcode(el, el.dataset.value, { format: "CODE128", displayValue: true, fontSize: 11, height: 34, margin: 2 }); } catch (e) { console.error("barcode render failed", e); }
+      try { window.JsBarcode(el, el.dataset.value, { format: barcodeFormatFor(el.dataset.value), displayValue: false, height: 44, margin: 4 }); fitBarcodeSvg(el); } catch (e) { console.error("barcode render failed", e); }
     });
   }, 30);
   closeModal();
@@ -6471,7 +6518,7 @@ function labelPrintModalHtml(productId) {
   const qty = state._labelQty || 6;
   return `<div class="modal-title-row"><h3>🏷️ طباعة ملصق باركود</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <div class="row-sub" style="margin-bottom:8px;">${esc(product.name)}</div>
-    ${!product.barcode ? `<div class="row-sub" style="color:var(--gold);margin-bottom:10px;background:var(--goldLight);padding:8px 10px;border-radius:8px;">⚠️ الصنف ده معندوش باركود محفوظ — هنستخدم ${product.sku ? "رمز المنتج (SKU)" : "رقم داخلي"} بدل منه. لو حابب باركود حقيقي، احفظه الأول من شاشة تعديل الصنف.</div>` : ""}
+    ${!product.barcode ? `<div class="row-sub" style="color:var(--gold);margin-bottom:10px;background:var(--goldLight);padding:8px 10px;border-radius:8px;">⚠️ هالصنف ما إله باركود — رح نعمله باركود جديد ونحفظه عليه، فبيضل نفسه كل مرة.</div>` : ""}
     <label class="field"><span class="lbl">عدد الملصقات</span>
       <div class="row-flex">
         <button class="qty-btn" onclick="state._labelQty=Math.max(1,(state._labelQty||6)-1);render();">－</button>
@@ -6489,14 +6536,12 @@ function printBarcodeLabels(productIds, qtyEach) {
   let idx = 0;
   const specs = [];
   products.forEach((p) => {
-    const codeVal = String(p.barcode || p.sku || p.id).replace(/[^A-Za-z0-9\-]/g, "");
+    const codeVal = getOrCreateBarcode(p);
     for (let i = 0; i < qtyEach; i++) {
       const elId = `bc-label-${idx}`;
       specs.push({ elId, value: codeVal });
       labelsHtml += `<div style="display:inline-block;width:31%;margin:1%;text-align:center;border:1px dashed #ccc;padding:6px 2px;vertical-align:top;page-break-inside:avoid;break-inside:avoid;">
-        <div style="font-size:10px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.name)}</div>
-        <svg id="${elId}"></svg>
-        <div style="font-size:10px;">${fmt(p.price)} ${esc(settings.currency)}</div>
+        <svg id="${elId}" style="width:100%;height:46px;"></svg>
       </div>`;
       idx++;
     }
@@ -6505,7 +6550,8 @@ function printBarcodeLabels(productIds, qtyEach) {
   setTimeout(() => {
     specs.forEach((s) => {
       try {
-        window.JsBarcode("#" + s.elId, s.value, { format: "CODE128", width: 1.4, height: 34, fontSize: 10, margin: 2 });
+        window.JsBarcode("#" + s.elId, s.value, { format: barcodeFormatFor(s.value), width: 1.6, height: 44, displayValue: false, margin: 4 });
+        fitBarcodeSvg(document.getElementById(s.elId));
       } catch (e) { console.error("barcode render failed", s.value, e); }
     });
   }, 30);
