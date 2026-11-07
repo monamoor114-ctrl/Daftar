@@ -1702,13 +1702,22 @@ async function authForgot() {
   try { await window.firebase.auth().sendPasswordResetEmail(email); flash("📧 بعتنالك رابط لتغيير كلمة السر على إيميلك"); }
   catch (e) { flash(authErrorAr(e)); }
 }
+// بيمسح نسخة بيانات الشركة من هالجهاز (البيانات بتضل بالسحابة). الصور ما بنلمسها.
+function wipeLocalCompanyData() {
+  try {
+    const keep = new Set([LS_PREFIX + "lang"]);
+    Object.keys(localStorage).filter((k) => k.startsWith(LS_PREFIX) && !keep.has(k)).forEach((k) => localStorage.removeItem(k));
+  } catch (e) {}
+}
 function authSignOut() {
   if (REP_MODE) { repModeExit(); return; }
-  if (!confirm("متأكد بدك تسجّل خروج؟ لازم إنترنت عشان تسجّل دخول مرة ثانية.")) return;
-  try { localStorage.removeItem(LS_PREFIX + "authUid"); } catch (e) {}
-  authUser = null;
+  const unsynced = Object.keys(cloudGetDirty() || {}).length > 0;
+  if (unsynced && !confirm("⚠️ في تعديلات على هالجهاز لسه ما انرفعت للسحابة. إذا سجّلت خروج هلأ رح تضيع. تأكد إنه العلامة فوق ✅ قبل ما تطلع. بدك تطلع على أي حال؟")) return;
+  if (!unsynced && !confirm("متأكد بدك تسجّل خروج؟ بيانات الشركة رح تنمسح من هالجهاز (وبتضل محفوظة بالسحابة)، ولما تدخل مرة ثانية بتنزل لحالها.")) return;
   try { window.firebase.auth().signOut(); } catch (e) {}
-  render();
+  authUser = null;
+  wipeLocalCompanyData();
+  location.reload();
 }
 // بعد تسجيل الدخول: نربط الحساب بسحابة الشركة
 async function authAfterSignIn(u) {
@@ -1727,7 +1736,19 @@ async function authAfterSignIn(u) {
     if (!db) return;
     const userRef = db.collection("daftar_users").doc(u.uid);
     const snap = await userRef.get();
-    const localLink = cloudGetLinkId();
+    let localLink = cloudGetLinkId();
+    // إذا على الجهاز بيانات شركة شخص ثاني (مثلاً صاحب الشركة فتح من جوال المندوب): بنمسحها من الجهاز وبنكمل كأنه جهاز جديد
+    if (localLink && !(snap.exists && snap.data().linkId)) {
+      let foreign = false;
+      try { const own = await db.collection("daftar_owners").doc(localLink).get(); foreign = own.exists && own.data().uid !== u.uid; }
+      catch (e) { foreign = true; }
+      if (foreign) {
+        wipeLocalCompanyData();
+        try { localStorage.setItem(LS_PREFIX + "authUid", u.uid); localStorage.setItem(LS_PREFIX + "authEmail", u.email || ""); } catch (e) {}
+        bootDB(); state.activeAccountId = null;
+        localLink = null;
+      }
+    }
     // إذا هالإيميل مضاف كمندوب عند شركة (وما عنده شركة خاصة فيه) — بنفتح التطبيق كمندوب
     if (!(snap.exists && snap.data().linkId) && !localLink) {
       try {
