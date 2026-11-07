@@ -3624,7 +3624,7 @@ function completeQuickSale() {
     persistScoped("sales", scoped("sales").map((s) => (s.id === state.editingSaleId ? sale : s)));
     flash("تم تحديث الفاتورة");
   } else {
-    sale = { id: uid(), ts: new Date().toISOString(), customerId, items: [], quick: true, invoiceNo: state.saleForm.invoiceNo || "", photo: state.saleForm.photo || null, total, subtotal: total, tax: 0, discount: 0, paidNow: paidNum, payType: isCheck ? "credit" : payType, checkPayment: isCheck };
+    sale = { id: uid(), ts: new Date().toISOString(), customerId, items: [], quick: true, invoiceNo: state.saleForm.invoiceNo || "", photo: state.saleForm.photo || null, total, subtotal: total, tax: 0, discount: 0, paidNow: paidNum, payType: isCheck ? "credit" : payType, checkPayment: isCheck, repId: state._activeRepId || (REP_MODE && currentRep() ? currentRep().id : undefined) };
     const saved = addScoped("sales", sale);
     if (!saved) {
       flash("❌ فشل حفظ الفاتورة! مساحة التخزين ممتلئة — جرب تشيل الصورة أو امسح صور فواتير قديمة");
