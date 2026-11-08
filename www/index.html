@@ -5772,7 +5772,9 @@ function canvasToTsplBytes(canvas) {
     }
   }
   const mm = (px) => (px / 8).toFixed(1);
-  const heightMm = Math.max(10, Math.ceil(h / 8) + 5);
+  // + فراغ أبيض بآخر الورقة (حوالي 2.5 سم) عشان تنقطع الفاتورة بسهولة
+  const feedMm = parseInt(localStorage.getItem("btFeedMm")) || 25;
+  const heightMm = Math.max(10, Math.ceil(h / 8) + feedMm);
   const header = `SIZE ${mm(w)} mm,${heightMm} mm\r\nGAP 0 mm,0 mm\r\nDIRECTION 0\r\nREFERENCE 0,0\r\nCLS\r\n`;
   const bitmapCmd = `BITMAP 0,0,${bytesPerRow},${h},0,`;
   const footer = `\r\nPRINT 1,1\r\n`;
