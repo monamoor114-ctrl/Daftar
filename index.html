@@ -5950,7 +5950,7 @@ async function printViaBluetooth(btn, forcePick) {
       bytes = canvasToTsplBytes(canvas);
     }
     await btWriteFast(ch, bytes);
-    btPrintStatus("✅ انبعتت للطابعة. إذا ما طبعت، اكبس «جرّب الوضع الثاني» تحت.");
+    btPrintStatus("✅ انبعتت للطابعة (" + (_btDevice && _btDevice.name || "?") + " · " + String(ch.uuid).slice(0, 8) + " · " + (mode === "escpos" ? "الوضع الثاني" : "الوضع الأول") + " · " + Math.round(bytes.length / 1024) + "KB). إذا ما طبعت، اكبس «جرّب الوضع الثاني».");
   } catch (e) {
     _btDevice = null; _btChar = null;
     const m = String((e && e.message) || e);
@@ -5968,7 +5968,8 @@ function btToggleMode() {
 // كتابة سريعة: قطع أكبر بدون انتظار، ولو الطابعة ما قبلت نرجع لقطع صغيرة
 async function btWriteFast(ch, bytes) {
   const noResp = !!ch.properties.writeWithoutResponse;
-  let size = noResp ? 180 : 20;
+  // قطع صغيرة (20 بايت) مضمونة مع كل الطابعات — القطع الكبيرة ممكن تضيع بصمت بطابعات رخيصة
+  let size = parseInt(localStorage.getItem("btChunk")) || 20;
   let i = 0, n = 0;
   const total = bytes.length;
   while (i < total) {
@@ -5980,7 +5981,7 @@ async function btWriteFast(ch, bytes) {
       throw e;
     }
     i += chunk.length; n++;
-    if (noResp && n % 8 === 0) await new Promise((r) => setTimeout(r, 15));
+    if (noResp && n % 20 === 0) await new Promise((r) => setTimeout(r, 12));
     if (n % 40 === 0) btPrintStatus("جاري الطباعة… " + Math.round((i / total) * 100) + "%");
   }
 }
