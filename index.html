@@ -105,6 +105,7 @@
   .floating-bar .fb-total { font-size:16px; font-weight:700; font-family:"Courier New",monospace; }
   .floating-bar .fb-btn { background:var(--gold); color:var(--greenDark); border:none; border-radius:8px; padding:9px 18px; font-weight:700; font-size:13.5px; }
   .scroll-pad-bottom { padding-bottom:76px; }
+  .name2 { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; word-break:break-word; line-height:1.35; min-width:0; }
   /* معاينة الطباعة: نافذة فوق كل الشاشة (كانت تنحط آخر الصفحة وما حدا يشوفها) */
   @media screen {
     #print-root { position:fixed; inset:0; z-index:150; overflow-y:auto; background:rgba(20,30,20,.55); padding:14px; }
@@ -2527,7 +2528,7 @@ function renderRepDashboard() {
       <button class="btn btn-ghost btn-block" style="margin-bottom:16px;" onclick="repOpenStatement()">📋 كشف حساب عميل</button>
       <div class="section-title" style="margin-top:0;">${isMain ? "بضاعة المحل" : "البضاعة المتوفرة معي"}</div>
       <div class="card" style="margin-bottom:16px;">
-        ${stockRows.length === 0 ? emptyState("لا توجد بضاعة مسجلة", true) : stockRows.map((r) => `<div class="list-row"><span class="flex1 truncate">${esc(r.name)}</span><span class="mono" style="font-weight:700;">${fmt(r.qty)}</span></div>`).join("")}
+        ${stockRows.length === 0 ? emptyState("لا توجد بضاعة مسجلة", true) : stockRows.map((r) => `<div class="list-row"><span class="flex1 name2">${esc(r.name)}</span><span class="mono" style="font-weight:700;">${fmt(r.qty)}</span></div>`).join("")}
       </div>
       <div class="section-title">مبيعاتي الأخيرة</div>
       ${mySales.length === 0 ? emptyState("لا توجد مبيعات بعد", true) : `<div class="card" style="margin-bottom:16px;">` + mySales.slice(0, 15).map((s) => {
@@ -2610,7 +2611,7 @@ function repReturnModalHtml() {
         ${canPrice ? `<input id="rr-price" type="text" inputmode="decimal" class="mono flex1" value="${Number(sel.price) || 0}" placeholder="السعر" />` : `<span class="mono row-sub" style="align-self:center;">× ${fmt(Number(sel.price) || 0)}</span>`}
         <button class="btn btn-green" style="padding:10px 14px;" onclick="repReturnAddItem()">＋</button>
       </div></div>` : ""}
-    ${cart.length ? `<div class="card" style="margin:8px 0;">${cart.map((c, i) => `<div class="list-row"><span class="flex1 truncate">${esc(c.name)}</span><span class="mono">${fmt(c.qty)} × ${fmt(c.price)}</span><button class="icon-btn" onclick="state._rrCart.splice(${i},1);render();">🗑️</button></div>`).join("")}
+    ${cart.length ? `<div class="card" style="margin:8px 0;">${cart.map((c, i) => `<div class="list-row"><span class="flex1 name2">${esc(c.name)}</span><span class="mono">${fmt(c.qty)} × ${fmt(c.price)}</span><button class="icon-btn" onclick="state._rrCart.splice(${i},1);render();">🗑️</button></div>`).join("")}
       <div class="list-row" style="font-weight:700;"><span class="flex1">مجموع المرتجع</span><span class="mono">${fmt(total)} ${esc(settings.currency)}</span></div></div>
       <div class="row-sub" style="margin-bottom:8px;">بينخصم من حساب الزبون، والبضاعة بترجع ${rep.warehouseId === "__main__" ? "للمحل" : "لسيارتك"}.</div>
       <button class="btn btn-stamp btn-block" onclick="repSaveReturn()">✅ تأكيد المرتجع</button>` : ""}`;
@@ -3299,8 +3300,8 @@ function productPickerResultsHtml(products, query, opts) {
       const out = stk <= 0;
       html += `<div class="list-row" style="${out && opts.blockOutOfStock ? "opacity:0.5;" : "cursor:pointer;"}" ${out && opts.blockOutOfStock ? "" : `onclick="${opts.addFn}('${p.id}')"`}>
         ${p.photo ? `<img src="${photoSrc(p.photo)}" style="width:30px;height:30px;object-fit:cover;border-radius:6px;flex-shrink:0;" />` : `<div style="width:30px;height:30px;border-radius:6px;background:var(--paperLight);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:13px;">📦</div>`}
-        <span class="flex1 truncate" style="font-size:13px;font-weight:600;">${esc(p.name)}</span>
-        <span class="chip mono" style="background:${out ? "var(--stampLight)" : "var(--greenLight)"};color:${out ? "var(--stamp)" : "var(--green)"};font-size:10px;">${out ? "نفذت" : stk}</span>
+        <span class="flex1" style="font-size:13px;font-weight:600;line-height:1.35;min-width:0;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${esc(p.name)}</span>
+        <span class="chip mono" style="background:${out ? "var(--stampLight)" : "var(--greenLight)"};color:${out ? "var(--stamp)" : "var(--green)"};font-size:10px;flex-shrink:0;">${out ? "نفذت" : stk}</span>
         <span class="mono" style="font-weight:700;font-size:12px;min-width:50px;text-align:left;">${fmt(p[opts.priceField])}</span>
       </div>`;
     });
@@ -4936,7 +4937,7 @@ function renderInventory() {
     html += `<div class="card">` + filtered.map((p) => {
       const out = p.stock <= 0, low = !out && p.stock <= (p.minStock ?? 5);
       return `<div class="list-row" onclick="openProductModal('${p.id}')" style="cursor:pointer;">
-        <div class="flex1"><div class="row-title truncate">${esc(p.name)}</div><div class="mono row-sub">${esc(p.sku || "—")} · ${esc(p.category || "بدون تصنيف")}</div></div>
+        <div class="flex1"><div class="row-title name2">${esc(p.name)}</div><div class="mono row-sub">${esc(p.sku || "—")} · ${esc(p.category || "بدون تصنيف")}</div></div>
         <div style="text-align:left;"><div class="mono" style="font-weight:600;">${fmt(p.price)} ${esc(settings.currency)}</div>
           <div class="mono row-sub" style="color:${out ? "var(--stamp)" : low ? "var(--gold)" : "var(--inkSoft)"};">${low ? "⚠️ " : ""}مخزون: ${p.stock}</div></div>
       </div>`;
@@ -4997,7 +4998,7 @@ function barcodeLabelsModalHtml() {
       <input id="scan-picker-search" placeholder="ابحث عن صنف..." value="${esc(state._barcodeSearch || "")}" oninput="state._barcodeSearch=this.value;render();" /></div>
     <div class="card" style="max-height:320px;overflow-y:auto;padding:0;margin-bottom:12px;">
       ${filtered.length === 0 ? emptyState("لا يوجد صنف بهذا الاسم") : filtered.map((p) => `<div class="list-row">
-        <span class="flex1 truncate" style="font-size:12.5px;">${esc(p.name)}</span>
+        <span class="flex1 name2" style="font-size:12.5px;">${esc(p.name)}</span>
         <input type="text" inputmode="numeric" class="mono" style="width:50px;text-align:center;padding:5px;" placeholder="0" value="${state._barcodeQty[p.id] || ""}" oninput="state._barcodeQty['${p.id}']=this.value;" />
       </div>`).join("")}
     </div>
@@ -5187,7 +5188,7 @@ function renderReports() {
   if (topProducts.length === 0) html += emptyState("لا توجد مبيعات في هذه الفترة", true);
   else {
     html += `<div class="card">` + topProducts.map((t, i) => `<div class="list-row"><span class="mono row-sub">${i + 1}</span>
-      <span class="flex1 truncate" style="font-size:13px;">${esc(t.name)}</span>
+      <span class="flex1 name2" style="font-size:13px;">${esc(t.name)}</span>
       <span class="mono row-sub">× ${t.qty}</span>
       <span class="mono" style="font-weight:600;">${fmt(t.revenue)} ${esc(settings.currency)}</span></div>`).join("") + `</div>`;
   }
@@ -6502,7 +6503,7 @@ function warehouseDetailHtml(id) {
           </div></div>` : `<button class="btn btn-ghost btn-block" style="margin-bottom:8px;font-size:12.5px;" onclick="printTransferReceipt('${id}','today')">🖨 كشف اللي طلع اليوم</button>`}
         <div class="row-sub" style="margin-bottom:8px;background:var(--goldLight);padding:8px 10px;border-radius:8px;color:#5B4B1F;">${isIn ? "هينقص من مخزون المحل، ويزيد في هذا المستودع تلقائي" : "هيزيد في مخزون المحل، وينقص من هذا المستودع تلقائي"}</div>
         ${cart.length > 0 ? `<div class="card" style="padding:8px 10px;margin-bottom:10px;">
-          ${cart.map((c, i) => `<div class="list-row" style="padding:6px 0;"><span class="flex1 truncate" style="font-size:12.5px;">${esc(c.name)}</span><span class="mono" style="font-weight:700;">${fmt(c.qty)}</span><button class="icon-btn" style="color:var(--stamp);" onclick="removeTransferCartItem(${i})">🗑</button></div>`).join("")}
+          ${cart.map((c, i) => `<div class="list-row" style="padding:6px 0;"><span class="flex1 name2" style="font-size:12.5px;">${esc(c.name)}</span><span class="mono" style="font-weight:700;">${fmt(c.qty)}</span><button class="icon-btn" style="color:var(--stamp);" onclick="removeTransferCartItem(${i})">🗑</button></div>`).join("")}
         </div>` : ``}
         ${(() => {
           const whBal = (name) => scoped("warehouseEntries").filter((e) => e.warehouseId === id && e.productName === name).reduce((a, e) => a + (e.type === "in" ? e.qty : -e.qty), 0);
@@ -6541,7 +6542,7 @@ function warehouseDetailHtml(id) {
     </div>`; })()}
     <button class="btn btn-ghost btn-block" style="margin-bottom:10px;justify-content:space-between;display:flex;" onclick="state._whShowBal=!state._whShowBal;render();"><span>📦 الرصيد الحالي لكل صنف (${Object.keys(byProduct).filter((n) => Math.abs(byProduct[n].in - byProduct[n].out) > 1e-9).length})</span><span>${state._whShowBal ? "▲" : "▼"}</span></button>
     ${state._whShowBal ? (Object.keys(byProduct).length === 0 ? emptyState("لا توجد أصناف بعد", true) : `<div class="card" style="margin-bottom:14px;">` +
-      Object.entries(byProduct).map(([name, v]) => `<div class="list-row"><span class="flex1 truncate">${esc(name)}</span><span class="mono" style="font-weight:700;">${fmt(v.in - v.out)} ${esc(v.unit)}</span></div>`).join("") + `</div>`) : ""}
+      Object.entries(byProduct).map(([name, v]) => `<div class="list-row"><span class="flex1 name2">${esc(name)}</span><span class="mono" style="font-weight:700;">${fmt(v.in - v.out)} ${esc(v.unit)}</span></div>`).join("") + `</div>`) : ""}
 
     <div class="section-title">سجل السندات</div>
     ${sorted.length === 0 ? emptyState("لا توجد سندات بعد", true) : sorted.map((e) => `
@@ -6751,7 +6752,7 @@ function invoiceDetailHtml(txKind, txId) {
     ${tx.quick ? `<div class="row-sub" style="margin-bottom:8px;">🧾 فاتورة سريعة — بدون تفصيل أصناف (ما بتأثر على المخزون)</div>${tx.photo ? `<img src="${photoSrc(tx.photo)}" style="width:100%;border-radius:8px;margin-bottom:12px;" />` : ``}` : `
     <div class="section-title" style="margin-top:0;">الأصناف</div>
     <div class="card">${tx.items.map((it, i) => `<div class="list-row">
-      <span class="flex1 truncate">${esc(it.name)}</span>
+      <span class="flex1 name2">${esc(it.name)}</span>
       <span class="mono row-sub">${fmt(it.qty)} × ${fmt(isSale ? it.price : it.cost)}</span>
       <span class="mono" style="font-weight:700;">${fmt(it.qty * (isSale ? it.price : it.cost))}</span>
       ${!isReturn && it.qty > 0 ? `<button class="icon-btn" style="color:var(--stamp);" onclick="openReturnModal('${txKind}','${tx.id}',${i})">🔄</button>` : ``}
