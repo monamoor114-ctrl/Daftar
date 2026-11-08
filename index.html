@@ -5325,6 +5325,31 @@ function removeTransferCartItem(index) {
   state._transferCart.splice(index, 1);
   render();
 }
+function returnAllToShop(warehouseId) {
+  const w = scoped("warehouses").find((x) => x.id === warehouseId); if (!w) return;
+  const bal = {};
+  scoped("warehouseEntries").filter((e) => e.warehouseId === warehouseId).forEach((e) => { bal[e.productName] = (bal[e.productName] || 0) + (e.type === "in" ? e.qty : -e.qty); });
+  const byName = {}; scoped("products").forEach((p) => { byName[normName(p.name)] = p; });
+  const items = Object.entries(bal).filter(([, q]) => Math.abs(q) > 1e-9);
+  if (!items.length) { flash("المستودع فاضي أصلاً"); return; }
+  const pos = items.filter(([, q]) => q > 0);
+  const missing = pos.filter(([n]) => !byName[normName(n)]).map(([n]) => n);
+  const neg = items.filter(([, q]) => q < 0);
+  const totalQty = pos.reduce((a, [, q]) => a + q, 0);
+  let msg = `رح ترجع كل بضاعة «${w.name}» للمحل:\n${pos.length} صنف (${fmt(totalQty)} قطعة)، والمستودع بيصير صفر.`;
+  if (missing.length) msg += `\n\n⚠️ ${missing.length} صنف اسمه مش موجود بالمنتجات (ما رح يزيد بالمحل، بس بيتصفّر من المستودع):\n${missing.join("، ")}`;
+  if (neg.length) msg += `\n\n${neg.length} صنف رصيده بالسالب، رح يتصفّر.`;
+  if (!confirm(msg + "\n\nمتأكد؟")) return;
+  const batch = uid(); const ts = new Date().toISOString();
+  const add = {};
+  pos.forEach(([n, q]) => { const p = byName[normName(n)]; if (p) add[p.id] = (add[p.id] || 0) + q; });
+  persistScoped("products", scoped("products").map((p) => (add[p.id] ? { ...p, stock: (Number(p.stock) || 0) + add[p.id] } : p)));
+  pos.forEach(([n, q]) => addScoped("warehouseEntries", { id: uid(), warehouseId, ts, type: "out", productName: n, qty: q, unit: "", party: "", note: byName[normName(n)] ? "منقول للمحل (ترجيع الكل)" : "تصفير — اسم مش موجود بالمنتجات", batch }));
+  neg.forEach(([n, q]) => addScoped("warehouseEntries", { id: uid(), warehouseId, ts, type: "in", productName: n, qty: -q, unit: "", party: "", note: "تصفير رصيد سالب", batch }));
+  state._lastTransfer = { warehouseId, batch, isIn: false };
+  flash(`✅ رجعت ${pos.length} صنف للمحل، والمستودع صار صفر`);
+  render();
+}
 function confirmTransfer(warehouseId) {
   const mode = state._whEntryType;
   const isIn = mode === "transfer_in";
@@ -6540,6 +6565,7 @@ function warehouseDetailHtml(id) {
       <div class="flex-between" style="margin-top:2px;"><span class="row-sub">بسعر البيع: <span class="mono">${fmt(v.sale)}</span></span><span class="row-sub">🖨 تفصيل</span></div>
       ${v.missing.length ? `<div class="row-sub" style="color:var(--stamp);margin-top:4px;">⚠️ ${v.missing.length} صنف اسمه مش موجود بالمنتجات وما انحسب</div>` : ""}
     </div>`; })()}
+    <button class="btn btn-ghost btn-block" style="margin-bottom:8px;color:var(--stamp);border:1.5px dashed var(--stamp);" onclick="returnAllToShop('${id}')">↩️ رجّع كل البضاعة للمحل (تصفير)</button>
     <button class="btn btn-ghost btn-block" style="margin-bottom:10px;justify-content:space-between;display:flex;" onclick="state._whShowBal=!state._whShowBal;render();"><span>📦 الرصيد الحالي لكل صنف (${Object.keys(byProduct).filter((n) => Math.abs(byProduct[n].in - byProduct[n].out) > 1e-9).length})</span><span>${state._whShowBal ? "▲" : "▼"}</span></button>
     ${state._whShowBal ? (Object.keys(byProduct).length === 0 ? emptyState("لا توجد أصناف بعد", true) : `<div class="card" style="margin-bottom:14px;">` +
       Object.entries(byProduct).map(([name, v]) => `<div class="list-row"><span class="flex1 name2">${esc(name)}</span><span class="mono" style="font-weight:700;">${fmt(v.in - v.out)} ${esc(v.unit)}</span></div>`).join("") + `</div>`) : ""}
@@ -7429,6 +7455,23 @@ async function repRemoveCloud(email) {
 
 /* ---------- شاشة المندوبين عند صاحب الشركة ---------- */
 const REP_PERM_LABELS = [["sale", "🛒 بيع"], ["collect", "💰 تحصيل"], ["purchase", "🚚 شراء"], ["changePrice", "✏️ تعديل السعر"], ["addCustomer", "➕ إضافة زبون"], ["allCustomers", "👥 كل الزباين"]];
+function changeRepPlace(repId) { state._repPlaceEdit = state._repPlaceEdit === repId ? null : repId; render(); }
+function setRepPlace(repId, wh) {
+  if (!wh) return;
+  const reps = loadKey("reps", []) || [];
+  const r = reps.find((x) => x.id === repId); if (!r) return;
+  const from = r.warehouseId;
+  r.warehouseId = wh; saveKey("reps", reps);
+  state._repPlaceEdit = null;
+  scheduleRepPublish(300);
+  flash("✅ " + r.name + " صار يبيع من: " + (wh === "__main__" ? "المحل الرئيسي" : (scoped("warehouses").find((w) => w.id === wh) || {}).name));
+  render();
+  // إذا كان على مستودع وفيه بضاعة، نعرض نرجّعها للمحل
+  if (from && from !== "__main__" && from !== wh) {
+    const left = scoped("warehouseEntries").filter((e) => e.warehouseId === from).reduce((m, e) => { m[e.productName] = (m[e.productName] || 0) + (e.type === "in" ? e.qty : -e.qty); return m; }, {});
+    if (Object.values(left).some((q) => q > 1e-9)) setTimeout(() => returnAllToShop(from), 300);
+  }
+}
 function repPlaceLabel(rep) {
   if (!rep.warehouseId || rep.warehouseId === "__main__") return "🏪 من المحل الرئيسي";
   const w = scoped("warehouses").find((x) => x.id === rep.warehouseId);
@@ -7494,7 +7537,7 @@ function renderRepsScreen() {
     const p = repPermissions(r);
     return `<div class="card" style="padding:12px;margin-bottom:12px;">
       <div class="flex-between" style="margin-bottom:6px;">
-        <div><div class="row-title">${esc(r.name)}</div><div class="row-sub" dir="ltr" style="text-align:right;">${esc(r.email || "— بدون إيميل (نظام قديم)")}</div><div class="row-sub">${repPlaceLabel(r)}</div></div>
+        <div><div class="row-title">${esc(r.name)}</div><div class="row-sub" dir="ltr" style="text-align:right;">${esc(r.email || "— بدون إيميل (نظام قديم)")}</div><div class="row-sub">${repPlaceLabel(r)} <button class="btn btn-ghost" style="padding:2px 8px;font-size:11px;min-height:0;margin-right:4px;" onclick="changeRepPlace('${r.id}')">✏️ تغيير</button></div>${state._repPlaceEdit === r.id ? `<select style="margin-top:6px;font-size:13px;" onchange="setRepPlace('${r.id}', this.value)"><option value="">— اختار —</option><option value="__main__">🏪 المحل الرئيسي</option>${scoped("warehouses").map((w) => `<option value="${w.id}">🚚 ${esc(w.name)}</option>`).join("")}</select>` : ""}</div>
         <button class="icon-btn" style="color:var(--stamp);" onclick="deleteRepAccount('${r.id}')">🗑</button>
       </div>
       ${repTodayCardHtml(r)}
