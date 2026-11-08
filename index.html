@@ -89,7 +89,7 @@
   .section-title { font-size:14px; font-weight:700; margin:16px 0 8px; }
   .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:50; display:flex; align-items:flex-end; justify-content:center; }
   @media(min-width:640px){ .modal-backdrop{ align-items:center; } }
-  .modal-box { background:var(--paperLight); color:var(--ink); width:100%; max-width:440px; max-height:88vh; overflow-y:auto; overscroll-behavior-y: contain; border-radius:16px 16px 0 0; padding:20px; }
+  .modal-box { background:var(--paperLight); color:var(--ink); width:100%; max-width:440px; max-height:88vh; overflow-y:auto; overscroll-behavior-y: contain; overflow-anchor:none; border-radius:16px 16px 0 0; padding:20px; }
   @media(min-width:640px){ .modal-box{ border-radius:16px; } }
   .modal-title-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
   .close-x { background:none; border:none; font-size:18px; cursor:pointer; color:var(--ink); }
@@ -105,11 +105,17 @@
   .floating-bar .fb-total { font-size:16px; font-weight:700; font-family:"Courier New",monospace; }
   .floating-bar .fb-btn { background:var(--gold); color:var(--greenDark); border:none; border-radius:8px; padding:9px 18px; font-weight:700; font-size:13.5px; }
   .scroll-pad-bottom { padding-bottom:76px; }
+  /* معاينة الطباعة: نافذة فوق كل الشاشة (كانت تنحط آخر الصفحة وما حدا يشوفها) */
+  @media screen {
+    #print-root { position:fixed; inset:0; z-index:150; overflow-y:auto; background:rgba(20,30,20,.55); padding:14px; }
+    #print-root > .print-sheet { max-width:420px; margin:0 auto; background:var(--paperLight); border-radius:14px; padding:12px; }
+  }
   @media print {
     @page { size: 58mm auto; margin: 2mm; }
     body > *:not(#print-root) { display:none !important; }
     #print-root { position:static !important; visibility:visible; width:100%; padding:16px; background:#fff; color:#111; }
     #print-root * { visibility:visible; }
+    #print-root > .print-sheet { background:#fff !important; padding:0 !important; }
     .no-print { display:none !important; }
     .print-area tr, .print-area .print-row, .print-area .print-card { page-break-inside:avoid; break-inside:avoid; }
     .print-area table { page-break-inside:auto; }
@@ -2413,6 +2419,8 @@ function render() {
   if (activeId) {
     const el = document.getElementById(activeId);
     if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT")) {
+      // حقل بحث كان مفتوح: نرجّع قائمة الاقتراحات فوراً (قبل ما نرجّع مكان التمرير) عشان الشاشة ما تنط
+      if (SUGGEST[activeId]) { const c = SUGGEST[activeId]; c._scrolled = true; try { suggestUpdate(activeId); } catch (e) {} }
       el.focus();
       if (selStart !== null && el.setSelectionRange) {
         try { el.setSelectionRange(selStart, selEnd); } catch (e) {}
@@ -2569,7 +2577,7 @@ function repReturnAddItem() {
   if (pe && repPermissions(rep).changePrice) price = parseFloat(pe.value) || price;
   const ex = state._rrCart.find((c) => c.productId === p.id && c.price === price);
   if (ex) ex.qty += qty; else state._rrCart.push({ productId: p.id, name: p.name, price, qty });
-  state._rrPid = null; render();
+  state._rrPid = null; SUGGEST_TYPED["rr-product"] = ""; render();
   setTimeout(() => { const f = document.getElementById("rr-product"); if (f) f.focus(); }, 80);
 }
 function repReturnModalHtml() {
@@ -2960,12 +2968,12 @@ function fieldSelect(id, label, options, selected, placeholder) {
     </select></label>`;
 }
 /* ===== حقل اسم مع قائمة اقتراحات (بديل datalist اللي ما بيشتغل داخل تطبيق الأندرويد) ===== */
-const SUGGEST = {};
+const SUGGEST = {}; var SUGGEST_TYPED = {};
 function normName(t) { return String(t || "").trim().toLowerCase().replace(/[أإآ]/g, "ا").replace(/ة/g, "ه").replace(/ى/g, "ي").replace(/\s+/g, " "); }
 function suggestFieldHtml(fieldId, options, selectedId, label, placeholder, onResolve, addKind) {
   const selected = options.find((c) => c.id === selectedId);
   SUGGEST[fieldId] = { names: options.map((o) => o.name), onResolve, addKind };
-  const typedNew = !selected ? (fieldId === "purchase-supplier" ? (state.purchaseForm || {})._typed : fieldId === "sale-customer" ? (state.saleForm || {})._typed : "") || "" : "";
+  const typedNew = !selected ? (fieldId === "purchase-supplier" ? (state.purchaseForm || {})._typed : fieldId === "sale-customer" ? (state.saleForm || {})._typed : (SUGGEST_TYPED[fieldId] || "")) || "" : "";
   return `<label class="field" style="margin-bottom:${selected ? 10 : 4}px;"><span class="lbl">${esc(label)}</span>
     <input id="${fieldId}" value="${esc(selected ? selected.name : typedNew)}" placeholder="${esc(placeholder || "اكتب اسم أو اختار من القائمة...")}" autocomplete="off" autocorrect="off" spellcheck="false"
       oninput="suggestUpdate('${fieldId}')" onfocus="suggestUpdate('${fieldId}')" onblur="setTimeout(() => suggestBlur('${fieldId}'), 150)" />
@@ -2976,6 +2984,7 @@ function suggestFieldHtml(fieldId, options, selectedId, label, placeholder, onRe
 function suggestUpdate(fieldId) {
   const cfg = SUGGEST[fieldId]; const el = document.getElementById(fieldId); const box = document.getElementById(fieldId + "-sug");
   if (!cfg || !el || !box) return;
+  SUGGEST_TYPED[fieldId] = el.value;
   // نحفظ المكتوب أول بأول عشان أي تحديث للشاشة ما يمسحه
   if (fieldId === "purchase-supplier" || fieldId === "sale-customer") {
     const isSup = fieldId === "purchase-supplier";
@@ -2992,8 +3001,13 @@ function suggestUpdate(fieldId) {
   const exact = q && cfg.names.some((n) => normName(n) === q);
   const rows = list.map((n, i) => `<div class="list-row" style="padding:9px 12px;cursor:pointer;" onpointerdown="event.preventDefault();suggestPick('${fieldId}', ${cfg.names.indexOf(n)})">${esc(n)}</div>`);
   if (q && !exact && cfg.addKind) rows.push(`<div class="list-row" style="padding:9px 12px;cursor:pointer;color:var(--green);font-weight:700;" onpointerdown="event.preventDefault();suggestAddNew('${fieldId}')">➕ ${cfg.addKind === "customer" ? "إضافة عميل جديد" : "إضافة مورد جديد"}: ${esc(el.value.trim())}</div>`);
-  if (!rows.length) { box.style.display = "none"; return; }
+  // القائمة إلها طول ثابت وإنت بتكتب، عشان الشاشة ما تكبر وتصغر مع كل حرف (كانت تهز)
+  if (!rows.length) {
+    if (!q) { box.style.display = "none"; return; }
+    rows.push(`<div class="row-sub" style="padding:12px;text-align:center;">ما في اسم بهالشكل</div>`);
+  }
   box.innerHTML = rows.join("");
+  box.style.height = "240px";
   box.style.display = "block";
   // نحرّك الشاشة مرة وحدة بس لما تبلش تكتب — مش مع كل حرف (كانت الشاشة تهز)
   if (!cfg._scrolled) { cfg._scrolled = true; try { setTimeout(() => el.scrollIntoView({ block: "start", behavior: "auto" }), 250); } catch (e) {} }
@@ -3002,6 +3016,7 @@ function suggestPick(fieldId, idx) {
   const cfg = SUGGEST[fieldId]; const el = document.getElementById(fieldId);
   if (!cfg || !el) return;
   el.value = cfg.names[idx];
+  SUGGEST_TYPED[fieldId] = "";
   window._suggestPickTs = Date.now(); // الكبسة نفسها ممكن توقع على الخلفية لما الكيبورد يتسكّر — ما نسكّر الشاشة بسببها
   const box = document.getElementById(fieldId + "-sug"); if (box) box.style.display = "none";
   try { el.blur(); } catch (e) {}
@@ -3009,9 +3024,11 @@ function suggestPick(fieldId, idx) {
 }
 function suggestBlur(fieldId) {
   const cfg = SUGGEST[fieldId]; const el = document.getElementById(fieldId);
-  if (cfg && document.activeElement !== el) cfg._scrolled = false;
+  // الشاشة انرسمت من جديد والحقل لسا مفتوح (نفس الحقل): لا نسكّر القائمة
+  if (el && document.activeElement === el) return;
+  if (cfg) cfg._scrolled = false;
   const box = document.getElementById(fieldId + "-sug"); if (box) box.style.display = "none";
-  if (!cfg || !el || document.activeElement === el) return;
+  if (!cfg || !el) return;
   window[cfg.onResolve](fieldId);
 }
 function suggestAddNew(fieldId) {
@@ -3135,6 +3152,7 @@ function selectPurchaseSupplier(id) { state.purchaseForm.supplierId = id; state.
 // النوافذ الصغيرة اللي بتنفتح من جوّا الفاتورة (الكاميرا، حاسبة السعر، صنف جديد) بترجع للفاتورة لما تتسكّر
 function cartModalNow() { return state.modal && (state.modal.type === "saleCart" || state.modal.type === "purchaseCart") ? state.modal.type : null; }
 function closeModal() {
+  for (const k in SUGGEST_TYPED) SUGGEST_TYPED[k] = "";
   if (state.modal && state.modal.type === "scan") { try { stopScanner(); } catch (e) {} }
   let back = state.modal && state.modal._returnTo;
   // سكّرنا الكاميرا من غير ما نصوّر: نرجع لنفس الشاشة اللي كنا فيها، مع اللي كان مكتوب
@@ -3774,12 +3792,21 @@ function deleteSale(id) {
   const s = scoped("sales").find((x) => x.id === id);
   if (!s) return;
   if (!confirm("متأكد إنك بدك تمسح فاتورة المبيعات هاي؟ ما في رجعة بعد الحذف.")) return;
-  const restore = {};
-  s.items.forEach((it) => { restore[it.productId] = (restore[it.productId] || 0) + it.qty; });
-  persistScoped("products", scoped("products").map((p) => (restore[p.id] ? { ...p, stock: p.stock + restore[p.id] } : p)));
+  if (s.sourceWarehouseId) {
+    // الفاتورة طلعت من مستودع/سيارة: البضاعة بترجع لنفس المستودع، مش للمحل
+    const ts = new Date().toISOString();
+    s.items.forEach((it) => {
+      const q = Number(it.qty) || 0; if (!q) return;
+      addScoped("warehouseEntries", { id: uid(), warehouseId: s.sourceWarehouseId, ts, type: q > 0 ? "in" : "out", productName: it.name, qty: Math.abs(q), unit: "", party: "", note: "إلغاء فاتورة " + (docNo(s, "sales") || "") });
+    });
+  } else {
+    const restore = {};
+    s.items.forEach((it) => { restore[it.productId] = (restore[it.productId] || 0) + it.qty; });
+    persistScoped("products", scoped("products").map((p) => (restore[p.id] ? { ...p, stock: p.stock + restore[p.id] } : p)));
+  }
   persistScoped("sales", scoped("sales").filter((x) => x.id !== id));
   if (state.editingSaleId === id) resetSaleForm(); else render();
-  flash("تم إلغاء الفاتورة");
+  flash(s.sourceWarehouseId ? "تم إلغاء الفاتورة ورجعت البضاعة للمستودع" : "تم إلغاء الفاتورة");
 }
 
 /* keep select bound to state without full re-render loop issues */
@@ -5277,7 +5304,7 @@ function addTransferCartItem() {
   }
   if (existing) existing.qty += qty;
   else state._transferCart.push({ productId, name: product.name, qty });
-  state._transferScannedProductId = null;
+  state._transferScannedProductId = null; SUGGEST_TYPED["tr-product"] = "";
   render();
   setTimeout(() => { const f = document.getElementById("tr-product"); if (f) f.focus(); }, 80);
 }
@@ -5654,15 +5681,17 @@ function showPrint(innerHtml) {
     ? `<button class="btn btn-gold btn-block" onclick="printViaNativeBridge(this)">🖨 اطبع على الطابعة الحرارية (بلوتوث)</button>
        <button class="btn btn-ghost btn-block" style="font-size:11px;padding:6px;" onclick="forgetSavedPrinter()">🔄 تغيير الطابعة المحفوظة</button>`
     : `<button class="btn btn-gold btn-block" onclick="printViaBluetooth(this)">🔵 اطبع مباشرة عبر البلوتوث (بدون تطبيق خارجي)</button>`;
-  el.innerHTML = `<div id="print-capture" style="font-family:'Courier New',monospace;background:#fff;color:#000;padding:8px;">${innerHtml}</div>
-    <div class="no-print" style="margin-top:16px;display:flex;flex-direction:column;gap:8px;">
+  el.innerHTML = `<div class="print-sheet">
+    <div class="no-print" style="margin-bottom:12px;display:flex;flex-direction:column;gap:8px;">
+      ${nativeBtn}
+      <div id="bt-print-status" style="font-size:12px;color:var(--ink);text-align:center;font-weight:700;"></div>
       <div style="display:flex;gap:8px;">
         <button class="btn btn-green flex1" onclick="systemPrint()">🖨 طباعة (مشاركة النظام)</button>
-        <button class="btn btn-ghost" onclick="document.getElementById('print-root').remove()">إغلاق</button>
+        <button class="btn btn-ghost" onclick="document.getElementById('print-root').remove()">✕ إغلاق</button>
       </div>
-      ${nativeBtn}
-      <div id="bt-print-status" style="font-size:11px;color:var(--inkSoft);text-align:center;"></div>
-    </div>`;
+    </div>
+    <div id="print-capture" style="font-family:'Courier New',monospace;background:#fff;color:#000;padding:8px;">${innerHtml}</div></div>`;
+  el.scrollTop = 0;
 }
 /* ===================== طباعة مباشرة عبر البلوتوث (Web Bluetooth + ESC/POS raster) ===================== */
 const BT_PRINT_CANDIDATE_UUIDS = [
