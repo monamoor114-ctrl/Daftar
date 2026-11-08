@@ -5681,7 +5681,8 @@ function showPrint(innerHtml) {
     ? `<button class="btn btn-gold btn-block" onclick="printViaNativeBridge(this)">🖨 اطبع على الطابعة الحرارية (بلوتوث)</button>
        <button class="btn btn-ghost btn-block" style="font-size:11px;padding:6px;" onclick="forgetSavedPrinter()">🔄 تغيير الطابعة المحفوظة</button>`
     : `<button class="btn btn-gold btn-block" onclick="printViaBluetooth(this)">🔵 اطبع مباشرة عبر البلوتوث</button>
-       <div style="display:flex;gap:8px;"><button class="btn btn-ghost flex1" style="font-size:11px;padding:6px;" onclick="printViaBluetooth(this, true)">🔄 اختار طابعة ثانية</button><button class="btn btn-ghost flex1" style="font-size:11px;padding:6px;" onclick="btToggleMode()">⚙️ جرّب الوضع الثاني</button></div>`;
+       <div style="display:flex;gap:8px;"><button class="btn btn-ghost flex1" style="font-size:11px;padding:6px;" onclick="printViaBluetooth(this, true)">🔄 اختار طابعة ثانية</button><button class="btn btn-ghost flex1" style="font-size:11px;padding:6px;" onclick="btToggleMode()">⚙️ جرّب الوضع الثاني</button></div>
+       <button class="btn btn-ghost btn-block" style="font-size:11.5px;padding:7px;border:1.5px dashed var(--gold);" onclick="btTestChannels(this)">🧪 ما طبعت؟ اكبس هون — بيجرّب كل الطرق</button>`;
   el.innerHTML = `<div class="print-sheet">
     <div class="no-print" style="margin-bottom:12px;display:flex;flex-direction:column;gap:8px;">
       ${nativeBtn}
@@ -5712,7 +5713,8 @@ async function findWritableCharacteristic(server) {
     for (const ch of chars) if (ch.properties.write || ch.properties.writeWithoutResponse) all.push(ch);
   }
   // القناة المعروفة للطباعة أولاً، وبعدها أي قناة بتكتب بدون رد (أسرع)، وبعدها أي قناة
-  return all.find((c) => PREF.includes(String(c.uuid).toLowerCase())) || all.find((c) => c.properties.writeWithoutResponse) || all[0] || null;
+  const saved = (localStorage.getItem("btCharUuid") || "").toLowerCase();
+  return (saved && all.find((c) => String(c.uuid).toLowerCase() === saved)) || all.find((c) => PREF.includes(String(c.uuid).toLowerCase())) || all.find((c) => c.properties.writeWithoutResponse) || all[0] || null;
 }
 function btPrintStatus(msg) {
   const el = document.getElementById("bt-print-status");
@@ -5958,6 +5960,49 @@ async function printViaBluetooth(btn, forcePick) {
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+// تجربة كل القنوات: بيطبع ورقة صغيرة على كل قناة، فيها رمز (T1, E1, T2...) — اللي بيطلع بنعتمده
+var _btTestChars = [];
+async function btTestChannels(btn) {
+  if (!navigator.bluetooth) { btPrintStatus("❌ افتح اللينك من Chrome."); return; }
+  try {
+    if (btn) btn.disabled = true;
+    btPrintStatus("اختار الطابعة من القائمة…");
+    const device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: BT_PRINT_CANDIDATE_UUIDS });
+    btPrintStatus("جاري الاتصال…");
+    const server = await device.gatt.connect();
+    const services = await server.getPrimaryServices();
+    _btTestChars = [];
+    for (const svc of services) { let cs = []; try { cs = await svc.getCharacteristics(); } catch (e) { continue; } for (const c of cs) if (c.properties.write || c.properties.writeWithoutResponse) _btTestChars.push(c); }
+    if (!_btTestChars.length) { btPrintStatus("❌ ما في ولا قناة كتابة بهالطابعة."); return; }
+    const enc = (t) => { const a = new Uint8Array(t.length); for (let i = 0; i < t.length; i++) a[i] = t.charCodeAt(i) & 0xff; return a; };
+    for (let i = 0; i < _btTestChars.length; i++) {
+      const c = _btTestChars[i];
+      btPrintStatus("جاري التجربة على القناة " + (i + 1) + " من " + _btTestChars.length + "…");
+      const tspl = enc(`SIZE 70 mm,15 mm\r\nGAP 0 mm,0 mm\r\nCLS\r\nTEXT 30,20,"3",0,2,2,"T${i + 1}"\r\nPRINT 1,1\r\n`);
+      const esc = enc(`\x1b@\x1d!\x11E${i + 1}\x1d!\x00\n\n\n\n`);
+      for (const data of [tspl, esc]) {
+        try {
+          for (let k = 0; k < data.length; k += 20) {
+            const ch = data.slice(k, k + 20);
+            if (c.properties.write) await c.writeValueWithResponse(ch); else { await c.writeValueWithoutResponse(ch); await new Promise((r) => setTimeout(r, 30)); }
+          }
+        } catch (e) {}
+        await new Promise((r) => setTimeout(r, 700));
+      }
+    }
+    const btns = _btTestChars.map((c, i) => `<button class="btn btn-ghost" style="padding:6px 10px;font-size:12px;" onclick="btPickChannel(${i},'tspl')">T${i + 1}</button><button class="btn btn-ghost" style="padding:6px 10px;font-size:12px;" onclick="btPickChannel(${i},'escpos')">E${i + 1}</button>`).join("");
+    const st = document.getElementById("bt-print-status");
+    if (st) st.innerHTML = `شو الرمز اللي انطبع على الورقة؟ اكبسه:<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:6px;">${btns}</div><div class="row-sub" style="margin-top:6px;">ما طلع ولا إشي؟ يعني الطباعة من المتصفح ما بتزبط مع هالطابعة — بنستعمل التطبيق.</div>`;
+  } catch (e) {
+    btPrintStatus("❌ " + ((e && e.message) || e));
+  } finally { if (btn) btn.disabled = false; }
+}
+function btPickChannel(i, mode) {
+  const c = _btTestChars[i]; if (!c) return;
+  try { localStorage.setItem("btCharUuid", String(c.uuid).toLowerCase()); localStorage.setItem("btWebMode", mode); } catch (e) {}
+  _btDevice = null; _btChar = null;
+  btPrintStatus("✅ انحفظ (القناة " + (i + 1) + "، " + (mode === "tspl" ? "الوضع الأول" : "الوضع الثاني") + "). هلأ اكبس «اطبع مباشرة عبر البلوتوث».");
 }
 function btToggleMode() {
   const cur = localStorage.getItem("btWebMode") || "tspl";
