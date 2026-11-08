@@ -3002,6 +3002,7 @@ function suggestPick(fieldId, idx) {
   const cfg = SUGGEST[fieldId]; const el = document.getElementById(fieldId);
   if (!cfg || !el) return;
   el.value = cfg.names[idx];
+  window._suggestPickTs = Date.now(); // الكبسة نفسها ممكن توقع على الخلفية لما الكيبورد يتسكّر — ما نسكّر الشاشة بسببها
   const box = document.getElementById(fieldId + "-sug"); if (box) box.style.display = "none";
   try { el.blur(); } catch (e) {}
   window[cfg.onResolve](fieldId);
@@ -6213,7 +6214,7 @@ function renderModal() {
   else if (m.type === "invoiceDetail") inner = invoiceDetailHtml(m.txKind, m.txId);
   else if (m.type === "returnItem") inner = returnItemModalHtml(m.txKind, m.txId, m.itemIndex);
   else if (m.type === "scan") return scannerModalHtml();
-  return `<div class="modal-backdrop" onclick="if(event.target===this)closeModal();"><div class="modal-box">${inner}</div></div>`;
+  return `<div class="modal-backdrop" onclick="if(event.target===this && Date.now()-(window._suggestPickTs||0)>900)closeModal();"><div class="modal-box">${inner}</div></div>`;
 }
 function warehouseModalHtml(w) {
   return `<div class="modal-title-row"><h3>${w ? "تعديل مستودع" : "مستودع خارجي جديد"}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
@@ -7043,8 +7044,11 @@ function renderRepStatusScreen() {
 }
 function repSyncBadgeHtml() {
   const out = repOutbox();
-  const unsent = out.filter((o) => !o.sent).length;
-  const waiting = out.filter((o) => o.sent).length;
+  // نعدّ العمليات اللي بيشوفها المندوب (فاتورة، تحصيل، تسليم كاش...) مش تفاصيلها (حركة مخزون لكل صنف)
+  const MAIN = { sales: 1, vouchers: 1, purchases: 1, cashHandovers: 1, customers: 1, suppliers: 1 };
+  const cnt = (arr) => arr.length ? Math.max(1, arr.filter((o) => o.t === "add" && MAIN[o.key]).length) : 0;
+  const unsent = cnt(out.filter((o) => !o.sent));
+  const waiting = cnt(out.filter((o) => o.sent));
   if (unsent) return `<div class="card" style="padding:8px 12px;margin-bottom:10px;background:var(--goldLight);font-size:12.5px;">⏳ ${unsent} حركة بانتظار الإنترنت عشان تنبعت <button class="btn btn-ghost" style="padding:2px 8px;font-size:11px;min-height:0;margin-inline-start:6px;" onclick="repFlush()">إرسال</button></div>`;
   if (waiting) return `<div class="card" style="padding:8px 12px;margin-bottom:10px;background:var(--greenLight);font-size:12.5px;">📤 ${waiting} حركة انبعتت وبانتظار الحساب الرئيسي</div>`;
   return `<div class="row-sub" style="margin-bottom:10px;color:var(--green);">✅ كل حركاتك واصلة للحساب الرئيسي</div>`;
