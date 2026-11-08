@@ -5965,24 +5965,24 @@ function btToggleMode() {
   try { localStorage.setItem("btWebMode", next); } catch (e) {}
   btPrintStatus("الوضع هلأ: " + (next === "tspl" ? "الأول (TSPL)" : "الثاني (ESC/POS)") + " — اكبس اطبع مرة ثانية.");
 }
-// كتابة سريعة: قطع أكبر بدون انتظار، ولو الطابعة ما قبلت نرجع لقطع صغيرة
+// الكتابة للطابعة: مع "استلام" لكل قطعة (الطابعة بتأكد إنها استلمت قبل ما نبعت اللي بعدها)
+// — بدون هيك الطابعات الرخيصة بيمتلي عندها المخزن وبتضيع البيانات بصمت وما بتطبع
 async function btWriteFast(ch, bytes) {
-  const noResp = !!ch.properties.writeWithoutResponse;
-  // قطع صغيرة (20 بايت) مضمونة مع كل الطابعات — القطع الكبيرة ممكن تضيع بصمت بطابعات رخيصة
-  let size = parseInt(localStorage.getItem("btChunk")) || 20;
+  const canResp = !!ch.properties.write;
+  let size = canResp ? (parseInt(localStorage.getItem("btChunk")) || 120) : 20;
   let i = 0, n = 0;
   const total = bytes.length;
   while (i < total) {
     const chunk = bytes.slice(i, i + size);
     try {
-      if (noResp) await ch.writeValueWithoutResponse(chunk); else await ch.writeValue(chunk);
+      if (canResp) await ch.writeValueWithResponse(chunk);
+      else { await ch.writeValueWithoutResponse(chunk); await new Promise((r) => setTimeout(r, 25)); }
     } catch (e) {
-      if (size > 20) { size = 20; continue; }
+      if (size > 20) { size = 20; try { localStorage.setItem("btChunk", "20"); } catch (x) {} continue; }
       throw e;
     }
     i += chunk.length; n++;
-    if (noResp && n % 20 === 0) await new Promise((r) => setTimeout(r, 12));
-    if (n % 40 === 0) btPrintStatus("جاري الطباعة… " + Math.round((i / total) * 100) + "%");
+    if (n % 10 === 0) btPrintStatus("جاري الطباعة… " + Math.round((i / total) * 100) + "%");
   }
 }
 function printInvoice(p, kind) {
