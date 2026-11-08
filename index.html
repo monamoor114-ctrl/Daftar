@@ -918,6 +918,10 @@ const I18N_EN = {
 "شيكات": "checks",
 "تجيير شيك": "Endorse check",
 "شيكات عندي": "My checks",
+"انسجلت الفاتورة": "Invoice saved",
+"انسجل سند القبض": "Receipt saved",
+"اطبع الفاتورة": "Print invoice",
+"اطبع سند القبض": "Print receipt",
 "بيان عام": "General description",
 "لا توجد شيكات قيد التحصيل حاليًا لتجييرها": "No pending checks to endorse",
 "اختر شيك أو أكتر تجيّرها": "Choose one or more checks to endorse",
@@ -1435,7 +1439,7 @@ function cloudApplySnapshot(kind, accountId, data) {
   if (!data || cloudRescueHold) return;
   // لو المستخدم لسه بيبني فاتورة (سلة فيها أصناف) أو واقف في نافذة إدخال بيانات، أجّل التحديث عشان ما نقطعش شغله
   const cartBusy = (state.cart && state.cart.length > 0) || (state.pcart && state.pcart.length > 0);
-  const modalBusy = state.modal && ["saleCart", "purchaseCart", "repCollect", "repHandover"].includes(state.modal.type);
+  const modalBusy = state.modal && ["saleCart", "purchaseCart", "repCollect", "repHandover", "repReturn"].includes(state.modal.type);
   if (cartBusy || modalBusy) { pendingCloudSnapshots.push({ kind, accountId, data }); return; }
   cloudApplyingRemote = true;
   try {
@@ -1495,7 +1499,7 @@ let pendingCloudSnapshots = [];
 function applyPendingCloudSnapshotIfSafe() {
   if (pendingCloudSnapshots.length === 0) return;
   const cartBusy = (state.cart && state.cart.length > 0) || (state.pcart && state.pcart.length > 0);
-  const modalBusy = state.modal && ["saleCart", "purchaseCart", "repCollect", "repHandover"].includes(state.modal.type);
+  const modalBusy = state.modal && ["saleCart", "purchaseCart", "repCollect", "repHandover", "repReturn"].includes(state.modal.type);
   if (cartBusy || modalBusy) return;
   const pending = pendingCloudSnapshots;
   pendingCloudSnapshots = [];
@@ -2482,6 +2486,10 @@ function renderRepDashboard() {
     </div>
     <div style="padding:14px;">
       ${REP_MODE ? repSyncBadgeHtml() : ""}
+      ${state._repLastPrint ? `<div class="card" style="padding:10px 12px;margin-bottom:10px;background:#fff;border:1.5px solid var(--green);">
+        <div class="flex-between"><strong style="font-size:13px;">✅ ${state._repLastPrint.kind === "sale" ? "انسجلت الفاتورة" : "انسجل سند القبض"}</strong><button class="icon-btn" onclick="state._repLastPrint=null;render();">✕</button></div>
+        <button class="btn btn-green btn-block" style="margin-top:8px;padding:11px;" onclick="${state._repLastPrint.kind === "sale" ? `printSale('${state._repLastPrint.id}')` : `repPrintVoucher('${state._repLastPrint.id}')`}">🖨 ${state._repLastPrint.kind === "sale" ? "اطبع الفاتورة" : "اطبع سند القبض"}</button>
+      </div>` : ""}
       <div class="card" style="padding:12px;text-align:center;background:var(--greenLight);margin-bottom:10px;">
         <div class="row-sub" style="font-weight:700;">💵 كاش اليوم معي</div>
         <div class="mono" style="font-weight:700;font-size:20px;color:var(--green);">${fmt(cashToday)} ${esc(settings.currency)}</div>
@@ -2495,6 +2503,7 @@ function renderRepDashboard() {
         ${perms.collect ? `<button class="btn btn-gold flex1" style="padding:14px 6px;font-size:13px;" onclick="repOpenCollect()">💰 تسجيل تحصيل</button>` : ""}
       </div>
       ${perms.purchase ? `<button class="btn btn-ghost btn-block" style="margin-bottom:8px;" onclick="repOpenPurchase()">🛒 تسجيل شراء</button>` : ""}
+      ${perms.sale ? `<button class="btn btn-ghost btn-block" style="margin-bottom:8px;color:var(--stamp);" onclick="repOpenReturn()">↩️ مرتجع من زبون</button>` : ""}
       <button class="btn btn-ghost btn-block" style="margin-bottom:16px;" onclick="repOpenStatement()">📋 كشف حساب عميل</button>
       <div class="section-title" style="margin-top:0;">${isMain ? "بضاعة المحل" : "البضاعة المتوفرة معي"}</div>
       <div class="card" style="margin-bottom:16px;">
@@ -2503,10 +2512,10 @@ function renderRepDashboard() {
       <div class="section-title">مبيعاتي الأخيرة</div>
       ${mySales.length === 0 ? emptyState("لا توجد مبيعات بعد", true) : `<div class="card" style="margin-bottom:16px;">` + mySales.slice(0, 15).map((s) => {
         const cust = s.customerId ? (customers.find((c) => c.id === s.customerId) || {}).name : "نقدي";
-        return `<div class="list-row"><div class="flex1"><div class="truncate" style="font-size:12.5px;">${esc(cust)} · ${s.items.length} صنف</div><div class="mono row-sub">${fmtDateTime(s.ts)}</div></div><span class="mono" style="font-weight:700;">${fmt(s.total)}</span></div>`;
+        return `<div class="list-row"><button class="icon-btn" style="color:var(--green);" onclick="printSale('${s.id}')">🖨</button><div class="flex1"><div class="truncate" style="font-size:12.5px;">${s.isReturn ? '<span style="color:var(--stamp);">🔄 مرتجع</span> · ' : ""}${esc(cust)} · ${s.items.length} صنف</div><div class="mono row-sub">${fmtDateTime(s.ts)}</div></div><span class="mono" style="font-weight:700;">${fmt(s.total)}</span></div>`;
       }).join("") + `</div>`}
       <div class="section-title">تحصيلاتي الأخيرة</div>
-      ${myVouchers.length === 0 ? emptyState("لا توجد تحصيلات بعد", true) : `<div class="card">` + myVouchers.slice(0, 15).map((v) => `<div class="list-row"><div class="flex1"><div class="truncate" style="font-size:12.5px;">${esc(v.partyName)}${v.method === "check" ? " (شيك)" : ""}</div><div class="mono row-sub">${fmtDateTime(v.ts)}</div></div><span class="mono" style="font-weight:700;color:var(--green);">${fmt(v.amount)}</span></div>`).join("") + `</div>`}
+      ${myVouchers.length === 0 ? emptyState("لا توجد تحصيلات بعد", true) : `<div class="card">` + myVouchers.slice(0, 15).map((v) => `<div class="list-row"><button class="icon-btn" style="color:var(--green);" onclick="repPrintVoucher('${v.id}')">🖨</button><div class="flex1"><div class="truncate" style="font-size:12.5px;">${esc(v.partyName)}${v.method === "check" ? " (شيك)" : ""}</div><div class="mono row-sub">${fmtDateTime(v.ts)}</div></div><span class="mono" style="font-weight:700;color:var(--green);">${fmt(v.amount)}</span></div>`).join("") + `</div>`}
     </div>
     ${state.modal ? renderModal() : ""}
   </div>`;
@@ -2534,6 +2543,77 @@ function repOpenPurchase() {
   state._activeRepId = rep.id;
   state.modal = { type: "purchaseCart" };
   render();
+}
+function repOpenReturn() {
+  const rep = currentRep(); if (!rep) return;
+  if (!repPermissions(rep).sale) { flash("صلاحية البيع موقوفة حاليًا"); return; }
+  state._rrCustId = ""; state._rrPid = null; state._rrCart = [];
+  state.modal = { type: "repReturn" }; render();
+}
+function repResolveReturnField(fieldId) {
+  const el = document.getElementById(fieldId); const rep = currentRep(); if (!el || !rep) return;
+  if (fieldId === "rr-customer") {
+    const c = repCollectCustomers(rep).find((o) => normName(o.name) === normName(el.value));
+    const id = c ? c.id : ""; if (state._rrCustId === id) return; state._rrCustId = id; render(); return;
+  }
+  const p = scoped("products").find((x) => normName(x.name) === normName(el.value));
+  const id = p ? p.id : null; if (state._rrPid === id) return; state._rrPid = id; render();
+  if (p) setTimeout(() => { const q = document.getElementById("rr-qty"); if (q) q.focus(); }, 80);
+}
+function repReturnAddItem() {
+  const rep = currentRep(); const p = scoped("products").find((x) => x.id === state._rrPid);
+  const qty = parseFloat((document.getElementById("rr-qty") || {}).value) || 0;
+  if (!p || qty <= 0) { flash("اختار الصنف وحط الكمية"); return; }
+  let price = Number(p.price) || 0;
+  const pe = document.getElementById("rr-price");
+  if (pe && repPermissions(rep).changePrice) price = parseFloat(pe.value) || price;
+  const ex = state._rrCart.find((c) => c.productId === p.id && c.price === price);
+  if (ex) ex.qty += qty; else state._rrCart.push({ productId: p.id, name: p.name, price, qty });
+  state._rrPid = null; render();
+  setTimeout(() => { const f = document.getElementById("rr-product"); if (f) f.focus(); }, 80);
+}
+function repReturnModalHtml() {
+  const rep = currentRep(); if (!rep) return "";
+  const settings = currentSettings();
+  const custs = repCollectCustomers(rep);
+  const sel = scoped("products").find((x) => x.id === state._rrPid);
+  const cart = state._rrCart || [];
+  const total = cart.reduce((a, c) => a + c.qty * c.price, 0);
+  const canPrice = repPermissions(rep).changePrice;
+  return `<div class="modal-title-row"><h3>↩️ مرتجع من زبون</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    ${custs.length === 0 ? `<div class="row-sub" style="color:var(--stamp);margin-bottom:10px;">ما في زباين مضافين إلك</div>` : suggestFieldHtml("rr-customer", custs, state._rrCustId, "الزبون — اكتب اسمه", "اكتب اسم الزبون...", "repResolveReturnField")}
+    ${suggestFieldHtml("rr-product", scoped("products"), state._rrPid, "🔍 الصنف المرتجع — اكتب اسمه", "اكتب أول حرفين من اسم الصنف...", "repResolveReturnField")}
+    ${sel ? `<div class="card" style="padding:10px 12px;margin-bottom:8px;background:var(--goldLight);border:none;">
+      <strong style="font-size:13.5px;">${esc(sel.name)}</strong>
+      <div class="row-flex" style="margin-top:8px;gap:8px;">
+        <input id="rr-qty" type="text" inputmode="decimal" class="mono flex1" placeholder="الكمية" style="font-size:16px;" onkeydown="if(event.key==='Enter'){event.preventDefault();repReturnAddItem();}" />
+        ${canPrice ? `<input id="rr-price" type="text" inputmode="decimal" class="mono flex1" value="${Number(sel.price) || 0}" placeholder="السعر" />` : `<span class="mono row-sub" style="align-self:center;">× ${fmt(Number(sel.price) || 0)}</span>`}
+        <button class="btn btn-green" style="padding:10px 14px;" onclick="repReturnAddItem()">＋</button>
+      </div></div>` : ""}
+    ${cart.length ? `<div class="card" style="margin:8px 0;">${cart.map((c, i) => `<div class="list-row"><span class="flex1 truncate">${esc(c.name)}</span><span class="mono">${fmt(c.qty)} × ${fmt(c.price)}</span><button class="icon-btn" onclick="state._rrCart.splice(${i},1);render();">🗑️</button></div>`).join("")}
+      <div class="list-row" style="font-weight:700;"><span class="flex1">مجموع المرتجع</span><span class="mono">${fmt(total)} ${esc(settings.currency)}</span></div></div>
+      <div class="row-sub" style="margin-bottom:8px;">بينخصم من حساب الزبون، والبضاعة بترجع ${rep.warehouseId === "__main__" ? "للمحل" : "لسيارتك"}.</div>
+      <button class="btn btn-stamp btn-block" onclick="repSaveReturn()">✅ تأكيد المرتجع</button>` : ""}`;
+}
+function repSaveReturn() {
+  const rep = currentRep(); if (!rep) return;
+  const cart = state._rrCart || [];
+  if (!state._rrCustId) { flash("اختار الزبون أول"); return; }
+  if (!cart.length) { flash("ضيف الأصناف المرتجعة"); return; }
+  const isMain = rep.warehouseId === "__main__";
+  const ts = new Date().toISOString();
+  if (isMain) {
+    persistScoped("products", scoped("products").map((p) => { const q = cart.filter((c) => c.productId === p.id).reduce((a, c) => a + c.qty, 0); return q ? { ...p, stock: (Number(p.stock) || 0) + q } : p; }));
+  } else {
+    cart.forEach((c) => addScoped("warehouseEntries", { id: uid(), warehouseId: rep.warehouseId, ts, type: "in", productName: c.name, qty: c.qty, unit: "", party: "", note: "مرتجع من زبون" }));
+  }
+  const total = cart.reduce((a, c) => a + c.qty * c.price, 0);
+  const sale = { id: uid(), ts, customerId: state._rrCustId, items: cart.map((c) => ({ productId: c.productId, name: c.name, price: c.price, qty: -c.qty })), subtotal: -total, tax: 0, discount: 0, total: -total, paidNow: 0, payType: "credit", isReturn: true, repId: rep.id, sourceWarehouseId: isMain ? null : rep.warehouseId };
+  addScoped("sales", sale);
+  state._repLastPrint = { kind: "sale", id: sale.id };
+  state._rrCart = []; state._rrPid = null;
+  flash("تم تسجيل المرتجع");
+  closeModal();
 }
 function repOpenCollect() {
   const rep = currentRep();
@@ -2577,6 +2657,7 @@ function repCollectModalHtml() {
     </div>
     <button class="btn btn-green btn-block" onclick="repSaveCollect()">تسجيل التحصيل</button>`;
 }
+function repPrintVoucher(id) { const v = scoped("vouchers").find((x) => x.id === id); if (v) printVoucher("customer", v); }
 function repSaveCollect() {
   const rep = currentRep();
   if (!rep) return;
@@ -2590,6 +2671,7 @@ function repSaveCollect() {
     partyName: cust ? cust.name : "", amount, desc: `تحصيل عن طريق: ${rep.name}`, method,
     cashAmount: method === "cash" ? amount : 0, repId: rep.id,
   });
+  { const v0 = scoped("vouchers").filter((v) => v.repId === rep.id).sort((a, b) => new Date(b.ts) - new Date(a.ts))[0]; if (v0) state._repLastPrint = { kind: "voucher", id: v0.id }; }
   flash("تم تسجيل التحصيل");
   closeModal();
 }
@@ -3598,6 +3680,7 @@ function completeSale() {
     }
     sale = { id: uid(), ts: new Date().toISOString(), customerId, items: state.cart.map((c) => ({ productId: c.productId, name: c.name, price: c.price, qty: c.qty })), subtotal, tax, discount, total, paidNow: paidNum, payType: isCheck ? "credit" : payType, checkPayment: isCheck, sourceWarehouseId: sourceWarehouseId || undefined, repId: state._activeRepId || undefined };
     addScoped("sales", sale);
+    if (REP_MODE || state._activeRepId) state._repLastPrint = { kind: "sale", id: sale.id };
     if (settings.autoPrintSale) {
       const partyName = customerId ? ((scoped("customers").find((c) => c.id === customerId) || {}).name || "") : "عميل نقدي";
       setTimeout(() => printInvoice({ ...sale, partyName }, "sale"), 300);
@@ -3644,6 +3727,7 @@ function completeQuickSale() {
   } else {
     sale = { id: uid(), ts: new Date().toISOString(), customerId, items: [], quick: true, invoiceNo: state.saleForm.invoiceNo || "", photo: state.saleForm.photo || null, total, subtotal: total, tax: 0, discount: 0, paidNow: paidNum, payType: isCheck ? "credit" : payType, checkPayment: isCheck, repId: state._activeRepId || (REP_MODE && currentRep() ? currentRep().id : undefined) };
     const saved = addScoped("sales", sale);
+    if (REP_MODE || state._activeRepId) state._repLastPrint = { kind: "sale", id: sale.id };
     if (!saved) {
       flash("❌ فشل حفظ الفاتورة! مساحة التخزين ممتلئة — جرب تشيل الصورة أو امسح صور فواتير قديمة");
       return;
@@ -6119,6 +6203,7 @@ function renderModal() {
   else if (m.type === "priceCalc") inner = priceCalcModalHtml(m.cartType, m.productId);
   else if (m.type === "repReport") inner = repReportModalHtml(m.repId);
   else if (m.type === "repCollect") inner = repCollectModalHtml();
+  else if (m.type === "repReturn") inner = repReturnModalHtml();
   else if (m.type === "repStatement") inner = repStatementModalHtml();
   else if (m.type === "repCustomers") inner = repCustomersModalHtml(m.repId);
   else if (m.type === "damage") inner = damageModalHtml(m.productId);
