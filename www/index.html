@@ -89,7 +89,7 @@
   .section-title { font-size:14px; font-weight:700; margin:16px 0 8px; }
   .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:50; display:flex; align-items:flex-end; justify-content:center; }
   @media(min-width:640px){ .modal-backdrop{ align-items:center; } }
-  .modal-box { background:var(--paperLight); color:var(--ink); width:100%; max-width:440px; max-height:88vh; overflow-y:auto; overscroll-behavior-y: contain; border-radius:16px 16px 0 0; padding:20px; }
+  .modal-box { background:var(--paperLight); color:var(--ink); width:100%; max-width:440px; max-height:88vh; overflow-y:auto; overscroll-behavior-y: contain; overflow-anchor:none; border-radius:16px 16px 0 0; padding:20px; }
   @media(min-width:640px){ .modal-box{ border-radius:16px; } }
   .modal-title-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
   .close-x { background:none; border:none; font-size:18px; cursor:pointer; color:var(--ink); }
@@ -105,11 +105,17 @@
   .floating-bar .fb-total { font-size:16px; font-weight:700; font-family:"Courier New",monospace; }
   .floating-bar .fb-btn { background:var(--gold); color:var(--greenDark); border:none; border-radius:8px; padding:9px 18px; font-weight:700; font-size:13.5px; }
   .scroll-pad-bottom { padding-bottom:76px; }
+  /* معاينة الطباعة: نافذة فوق كل الشاشة (كانت تنحط آخر الصفحة وما حدا يشوفها) */
+  @media screen {
+    #print-root { position:fixed; inset:0; z-index:150; overflow-y:auto; background:rgba(20,30,20,.55); padding:14px; }
+    #print-root > .print-sheet { max-width:420px; margin:0 auto; background:var(--paperLight); border-radius:14px; padding:12px; }
+  }
   @media print {
     @page { size: 58mm auto; margin: 2mm; }
     body > *:not(#print-root) { display:none !important; }
     #print-root { position:static !important; visibility:visible; width:100%; padding:16px; background:#fff; color:#111; }
     #print-root * { visibility:visible; }
+    #print-root > .print-sheet { background:#fff !important; padding:0 !important; }
     .no-print { display:none !important; }
     .print-area tr, .print-area .print-row, .print-area .print-card { page-break-inside:avoid; break-inside:avoid; }
     .print-area table { page-break-inside:auto; }
@@ -150,7 +156,7 @@ const I18N_EN = {
 "اكتب رقم سري": "Enter a PIN",
 "تم تحديث الرقم السري": "PIN updated",
 "تعذّر الاتصال بالسحابة": "Couldn't connect to the cloud",
-"الرمز غير صحيح — تأكد من الرمز اللي أعطاك إياه صاحب الشركة": "Wrong code — check the code the business owner gave you",
+"الرمز غير صحيح — تأكد من الرمز اللي أعطوك إياه": "Wrong code — check the code the business owner gave you",
 "الرقم السري غير صحيح": "Wrong PIN",
 "حصل خطأ": "An error occurred",
 "غير معروف": "Unknown",
@@ -259,7 +265,7 @@ const I18N_EN = {
 "جاري النقل": "Moving",
 "نقل الصور القديمة من السحابة للجهاز": "Move old photos from the cloud to the device",
 "دخول دفتر": "Daftar sign-in",
-"صاحب الشركة أو مندوب — نفس الشاشة": "Owner or rep — same screen",
+"الحساب الرئيسي أو مندوب — نفس الشاشة": "Owner or rep — same screen",
 "الرقم السري بتاعك": "Your PIN",
 "حط الرمز والرقم السري": "Enter the code and PIN",
 "الرمز أو الرقم السري غلط": "Wrong code or PIN",
@@ -267,9 +273,9 @@ const I18N_EN = {
 "مستودع خاص": "Private warehouse",
 "خروج": "Exit",
 "كاش اليوم معي": "Cash with me today",
-"في انتظار تأكيد صاحب الشركة": "Waiting for owner confirmation",
+"في انتظار تأكيد الحساب الرئيسي": "Waiting for owner confirmation",
 "طلبت تسليم": "Requested handover of",
-"تسليم الكاش لصاحب الشركة": "Hand cash to the owner",
+"تسليم الكاش للحساب الرئيسي": "Hand cash to the owner",
 "تسجيل بيع": "New sale",
 "تسجيل تحصيل": "New collection",
 "تسجيل شراء": "New purchase",
@@ -309,11 +315,11 @@ const I18N_EN = {
 "اختار العميل": "Choose the customer",
 "تسليم الكاش": "Cash handover",
 "المبلغ اللي معاك دلوقتي": "Amount you have now",
-"بعد ما تدوس تأكيد، هيوصل طلب لصاحب الشركة إنك سلّمته": "After you confirm, the owner gets a request saying you handed over",
+"بعد ما تدوس تأكيد، هيوصل طلب للحساب الرئيسي إنك سلّمته": "After you confirm, the owner gets a request saying you handed over",
 "دينار كاش — وهو اللي هيأكّد استلامه": "JOD in cash — they will confirm receipt",
 "تأكيد طلب التسليم": "Confirm handover request",
 "مفيش كاش تسلمه دلوقتي": "No cash to hand over now",
-"تم إرسال طلب التسليم — في انتظار تأكيد صاحب الشركة": "Handover request sent — waiting for owner confirmation",
+"تم إرسال طلب التسليم — في انتظار تأكيد الحساب الرئيسي": "Handover request sent — waiting for owner confirmation",
 "تسليم كاش من المندوب": "Cash handover from rep",
 "تم تأكيد استلام": "Receipt confirmed",
 "تم رفض الطلب": "Request rejected",
@@ -918,6 +924,10 @@ const I18N_EN = {
 "شيكات": "checks",
 "تجيير شيك": "Endorse check",
 "شيكات عندي": "My checks",
+"انسجلت الفاتورة": "Invoice saved",
+"انسجل سند القبض": "Receipt saved",
+"اطبع الفاتورة": "Print invoice",
+"اطبع سند القبض": "Print receipt",
 "بيان عام": "General description",
 "لا توجد شيكات قيد التحصيل حاليًا لتجييرها": "No pending checks to endorse",
 "اختر شيك أو أكتر تجيّرها": "Choose one or more checks to endorse",
@@ -1435,7 +1445,7 @@ function cloudApplySnapshot(kind, accountId, data) {
   if (!data || cloudRescueHold) return;
   // لو المستخدم لسه بيبني فاتورة (سلة فيها أصناف) أو واقف في نافذة إدخال بيانات، أجّل التحديث عشان ما نقطعش شغله
   const cartBusy = (state.cart && state.cart.length > 0) || (state.pcart && state.pcart.length > 0);
-  const modalBusy = state.modal && ["saleCart", "purchaseCart", "repCollect", "repHandover"].includes(state.modal.type);
+  const modalBusy = state.modal && ["saleCart", "purchaseCart", "repCollect", "repHandover", "repReturn"].includes(state.modal.type);
   if (cartBusy || modalBusy) { pendingCloudSnapshots.push({ kind, accountId, data }); return; }
   cloudApplyingRemote = true;
   try {
@@ -1495,7 +1505,7 @@ let pendingCloudSnapshots = [];
 function applyPendingCloudSnapshotIfSafe() {
   if (pendingCloudSnapshots.length === 0) return;
   const cartBusy = (state.cart && state.cart.length > 0) || (state.pcart && state.pcart.length > 0);
-  const modalBusy = state.modal && ["saleCart", "purchaseCart", "repCollect", "repHandover"].includes(state.modal.type);
+  const modalBusy = state.modal && ["saleCart", "purchaseCart", "repCollect", "repHandover", "repReturn"].includes(state.modal.type);
   if (cartBusy || modalBusy) return;
   const pending = pendingCloudSnapshots;
   pendingCloudSnapshots = [];
@@ -1558,7 +1568,7 @@ async function cloudTryLogin(linkId, pin) {
   try {
     const rootRef = db.collection("daftar_accounts").doc(linkId);
     const doc = await rootRef.get();
-    if (!doc.exists) { flash("الرمز غير صحيح — تأكد من الرمز اللي أعطاك إياه صاحب الشركة"); return false; }
+    if (!doc.exists) { flash("الرمز غير صحيح — تأكد من الرمز اللي أعطوك إياه"); return false; }
     const rootData = doc.data();
     if (rootData.cloudOwnerPin && pin === rootData.cloudOwnerPin) {
       cloudSetLinkId(linkId);
@@ -1702,13 +1712,22 @@ async function authForgot() {
   try { await window.firebase.auth().sendPasswordResetEmail(email); flash("📧 بعتنالك رابط لتغيير كلمة السر على إيميلك"); }
   catch (e) { flash(authErrorAr(e)); }
 }
+// بيمسح نسخة بيانات الشركة من هالجهاز (البيانات بتضل بالسحابة). الصور ما بنلمسها.
+function wipeLocalCompanyData() {
+  try {
+    const keep = new Set([LS_PREFIX + "lang"]);
+    Object.keys(localStorage).filter((k) => k.startsWith(LS_PREFIX) && !keep.has(k)).forEach((k) => localStorage.removeItem(k));
+  } catch (e) {}
+}
 function authSignOut() {
   if (REP_MODE) { repModeExit(); return; }
-  if (!confirm("متأكد بدك تسجّل خروج؟ لازم إنترنت عشان تسجّل دخول مرة ثانية.")) return;
-  try { localStorage.removeItem(LS_PREFIX + "authUid"); } catch (e) {}
-  authUser = null;
+  const unsynced = Object.keys(cloudGetDirty() || {}).length > 0;
+  if (unsynced && !confirm("⚠️ في تعديلات على هالجهاز لسه ما انرفعت للسحابة. إذا سجّلت خروج هلأ رح تضيع. تأكد إنه العلامة فوق ✅ قبل ما تطلع. بدك تطلع على أي حال؟")) return;
+  if (!unsynced && !confirm("متأكد بدك تسجّل خروج؟ بيانات الشركة رح تنمسح من هالجهاز (وبتضل محفوظة بالسحابة)، ولما تدخل مرة ثانية بتنزل لحالها.")) return;
   try { window.firebase.auth().signOut(); } catch (e) {}
-  render();
+  authUser = null;
+  wipeLocalCompanyData();
+  location.reload();
 }
 // بعد تسجيل الدخول: نربط الحساب بسحابة الشركة
 async function authAfterSignIn(u) {
@@ -1727,7 +1746,27 @@ async function authAfterSignIn(u) {
     if (!db) return;
     const userRef = db.collection("daftar_users").doc(u.uid);
     const snap = await userRef.get();
-    const localLink = cloudGetLinkId();
+    let localLink = cloudGetLinkId();
+    // أولاً: إذا هالإيميل مضاف كمندوب عند شركة ثانية — بيفتح كمندوب دايماً (حتى لو انعمله حساب فاضي قبل ما ينضاف)
+    try {
+      const ri = await db.collection("daftar_repIndex").doc(repEmailOf(u)).get();
+      if (ri.exists && ri.data().linkId && ri.data().ownerUid !== u.uid) {
+        wipeLocalCompanyData();
+        repEnterMode(u, ri.data()); return;
+      }
+    } catch (e) { console.warn("rep index check skipped", e && e.code); }
+    // إذا على الجهاز بيانات شركة شخص ثاني (مثلاً صاحب الشركة فتح من جوال المندوب): بنمسحها من الجهاز وبنكمل كأنه جهاز جديد
+    if (localLink && !(snap.exists && snap.data().linkId)) {
+      let foreign = false;
+      try { const own = await db.collection("daftar_owners").doc(localLink).get(); foreign = own.exists && own.data().uid !== u.uid; }
+      catch (e) { foreign = true; }
+      if (foreign) {
+        wipeLocalCompanyData();
+        try { localStorage.setItem(LS_PREFIX + "authUid", u.uid); localStorage.setItem(LS_PREFIX + "authEmail", u.email || ""); } catch (e) {}
+        bootDB(); state.activeAccountId = null;
+        localLink = null;
+      }
+    }
     // إذا هالإيميل مضاف كمندوب عند شركة (وما عنده شركة خاصة فيه) — بنفتح التطبيق كمندوب
     if (!(snap.exists && snap.data().linkId) && !localLink) {
       try {
@@ -1763,7 +1802,7 @@ async function authAfterSignIn(u) {
     }
   } catch (e) {
     console.error("auth link failed", e);
-  } finally { authLinking = false; render(); }
+  } finally { authLinking = false; try { repStartInbox(); } catch (e) {} render(); }
 }
 // تنزيل كل بيانات الشركة من السحابة لهالجهاز
 async function cloudPullCompany(linkId) {
@@ -2380,6 +2419,8 @@ function render() {
   if (activeId) {
     const el = document.getElementById(activeId);
     if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT")) {
+      // حقل بحث كان مفتوح: نرجّع قائمة الاقتراحات فوراً (قبل ما نرجّع مكان التمرير) عشان الشاشة ما تنط
+      if (SUGGEST[activeId]) { const c = SUGGEST[activeId]; c._scrolled = true; try { suggestUpdate(activeId); } catch (e) {} }
       el.focus();
       if (selStart !== null && el.setSelectionRange) {
         try { el.setSelectionRange(selStart, selEnd); } catch (e) {}
@@ -2405,7 +2446,7 @@ function renderRepLogin() {
     <div class="card" style="max-width:360px;width:100%;padding:24px;">
       <div style="text-align:center;font-size:34px;margin-bottom:6px;">📖</div>
       <h2 style="text-align:center;margin:0 0 6px;">دخول دفتر</h2>
-      <div class="row-sub" style="text-align:center;margin-bottom:16px;">صاحب الشركة أو مندوب — نفس الشاشة</div>
+      <div class="row-sub" style="text-align:center;margin-bottom:16px;">الحساب الرئيسي أو مندوب — نفس الشاشة</div>
       <label class="field"><span class="lbl">رمز الشركة</span><input id="rep-linkid" class="mono" value="${esc(state._repLinkIdInput || "")}" oninput="state._repLinkIdInput=this.value;" /></label>
       <label class="field"><span class="lbl">الرقم السري بتاعك</span><input id="rep-pin" type="text" inputmode="numeric" class="mono" value="${esc(state._repPinInput || "")}" oninput="state._repPinInput=this.value;" /></label>
       ${err ? `<div class="row-sub" style="color:var(--stamp);margin-bottom:10px;">${esc(err)}</div>` : ""}
@@ -2444,7 +2485,7 @@ function renderRepDashboard() {
   const myHandoversToday = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === rep.id && new Date(h.ts).toDateString() === todayStr0);
   const handedOverToday = myHandoversToday.filter((h) => h.status !== "rejected").reduce((a, h) => a + h.amount, 0);
   const pendingHandover = myHandoversToday.find((h) => h.status === "pending");
-  const cashToday = cashSalesToday + cashVouchersToday - handedOverToday;
+  const cashToday = Math.max(0, cashSalesToday + cashVouchersToday - handedOverToday);
   const perms = repPermissions(rep);
   return `<div style="min-height:100vh;background:var(--paper);padding-bottom:80px;">
     <div style="background:var(--greenDark);color:#fff;padding:16px;display:flex;justify-content:space-between;align-items:center;">
@@ -2453,19 +2494,24 @@ function renderRepDashboard() {
     </div>
     <div style="padding:14px;">
       ${REP_MODE ? repSyncBadgeHtml() : ""}
+      ${state._repLastPrint ? `<div class="card" style="padding:10px 12px;margin-bottom:10px;background:#fff;border:1.5px solid var(--green);">
+        <div class="flex-between"><strong style="font-size:13px;">✅ ${state._repLastPrint.kind === "sale" ? "انسجلت الفاتورة" : "انسجل سند القبض"}</strong><button class="icon-btn" onclick="state._repLastPrint=null;render();">✕</button></div>
+        <button class="btn btn-green btn-block" style="margin-top:8px;padding:11px;" onclick="${state._repLastPrint.kind === "sale" ? `printSale('${state._repLastPrint.id}')` : `repPrintVoucher('${state._repLastPrint.id}')`}">🖨 ${state._repLastPrint.kind === "sale" ? "اطبع الفاتورة" : "اطبع سند القبض"}</button>
+      </div>` : ""}
       <div class="card" style="padding:12px;text-align:center;background:var(--greenLight);margin-bottom:10px;">
         <div class="row-sub" style="font-weight:700;">💵 كاش اليوم معي</div>
         <div class="mono" style="font-weight:700;font-size:20px;color:var(--green);">${fmt(cashToday)} ${esc(settings.currency)}</div>
       </div>
       ${pendingHandover ? `<div class="card" style="padding:10px 12px;text-align:center;background:var(--goldLight);border:1.5px solid var(--gold);margin-bottom:14px;">
-        <div class="row-sub" style="color:#5B4B1F;font-weight:700;">⏳ في انتظار تأكيد صاحب الشركة</div>
+        <div class="row-sub" style="color:#5B4B1F;font-weight:700;">⏳ في انتظار تأكيد الحساب الرئيسي</div>
         <div class="mono" style="font-size:13px;color:#5B4B1F;">طلبت تسليم ${fmt(pendingHandover.amount)}</div>
-      </div>` : cashToday > 0 ? `<button class="btn btn-gold btn-block" style="margin-bottom:14px;padding:12px;" onclick="repOpenHandover()">📤 تسليم الكاش لصاحب الشركة</button>` : ""}
+      </div>` : cashToday > 0 ? `<button class="btn btn-gold btn-block" style="margin-bottom:14px;padding:12px;" onclick="repOpenHandover()">📤 تسليم الكاش للحساب الرئيسي</button>` : ""}
       <div class="row-flex" style="gap:8px;margin-bottom:8px;">
         ${perms.sale ? `<button class="btn btn-green flex1" style="padding:14px 6px;font-size:13px;" onclick="repOpenSale()">➕ تسجيل بيع</button>` : ""}
         ${perms.collect ? `<button class="btn btn-gold flex1" style="padding:14px 6px;font-size:13px;" onclick="repOpenCollect()">💰 تسجيل تحصيل</button>` : ""}
       </div>
       ${perms.purchase ? `<button class="btn btn-ghost btn-block" style="margin-bottom:8px;" onclick="repOpenPurchase()">🛒 تسجيل شراء</button>` : ""}
+      ${perms.sale ? `<button class="btn btn-ghost btn-block" style="margin-bottom:8px;color:var(--stamp);" onclick="repOpenReturn()">↩️ مرتجع من زبون</button>` : ""}
       <button class="btn btn-ghost btn-block" style="margin-bottom:16px;" onclick="repOpenStatement()">📋 كشف حساب عميل</button>
       <div class="section-title" style="margin-top:0;">${isMain ? "بضاعة المحل" : "البضاعة المتوفرة معي"}</div>
       <div class="card" style="margin-bottom:16px;">
@@ -2474,10 +2520,10 @@ function renderRepDashboard() {
       <div class="section-title">مبيعاتي الأخيرة</div>
       ${mySales.length === 0 ? emptyState("لا توجد مبيعات بعد", true) : `<div class="card" style="margin-bottom:16px;">` + mySales.slice(0, 15).map((s) => {
         const cust = s.customerId ? (customers.find((c) => c.id === s.customerId) || {}).name : "نقدي";
-        return `<div class="list-row"><div class="flex1"><div class="truncate" style="font-size:12.5px;">${esc(cust)} · ${s.items.length} صنف</div><div class="mono row-sub">${fmtDateTime(s.ts)}</div></div><span class="mono" style="font-weight:700;">${fmt(s.total)}</span></div>`;
+        return `<div class="list-row"><button class="icon-btn" style="color:var(--green);" onclick="printSale('${s.id}')">🖨</button><div class="flex1"><div class="truncate" style="font-size:12.5px;">${s.isReturn ? '<span style="color:var(--stamp);">🔄 مرتجع</span> · ' : ""}${esc(cust)} · ${s.items.length} صنف</div><div class="mono row-sub">${fmtDateTime(s.ts)}</div></div><span class="mono" style="font-weight:700;">${fmt(s.total)}</span></div>`;
       }).join("") + `</div>`}
       <div class="section-title">تحصيلاتي الأخيرة</div>
-      ${myVouchers.length === 0 ? emptyState("لا توجد تحصيلات بعد", true) : `<div class="card">` + myVouchers.slice(0, 15).map((v) => `<div class="list-row"><div class="flex1"><div class="truncate" style="font-size:12.5px;">${esc(v.partyName)}${v.method === "check" ? " (شيك)" : ""}</div><div class="mono row-sub">${fmtDateTime(v.ts)}</div></div><span class="mono" style="font-weight:700;color:var(--green);">${fmt(v.amount)}</span></div>`).join("") + `</div>`}
+      ${myVouchers.length === 0 ? emptyState("لا توجد تحصيلات بعد", true) : `<div class="card">` + myVouchers.slice(0, 15).map((v) => `<div class="list-row"><button class="icon-btn" style="color:var(--green);" onclick="repPrintVoucher('${v.id}')">🖨</button><div class="flex1"><div class="truncate" style="font-size:12.5px;">${esc(v.partyName)}${v.method === "check" ? " (شيك)" : ""}</div><div class="mono row-sub">${fmtDateTime(v.ts)}</div></div><span class="mono" style="font-weight:700;color:var(--green);">${fmt(v.amount)}</span></div>`).join("") + `</div>`}
     </div>
     ${state.modal ? renderModal() : ""}
   </div>`;
@@ -2506,6 +2552,77 @@ function repOpenPurchase() {
   state.modal = { type: "purchaseCart" };
   render();
 }
+function repOpenReturn() {
+  const rep = currentRep(); if (!rep) return;
+  if (!repPermissions(rep).sale) { flash("صلاحية البيع موقوفة حاليًا"); return; }
+  state._rrCustId = ""; state._rrPid = null; state._rrCart = [];
+  state.modal = { type: "repReturn" }; render();
+}
+function repResolveReturnField(fieldId) {
+  const el = document.getElementById(fieldId); const rep = currentRep(); if (!el || !rep) return;
+  if (fieldId === "rr-customer") {
+    const c = repCollectCustomers(rep).find((o) => normName(o.name) === normName(el.value));
+    const id = c ? c.id : ""; if (state._rrCustId === id) return; state._rrCustId = id; render(); return;
+  }
+  const p = scoped("products").find((x) => normName(x.name) === normName(el.value));
+  const id = p ? p.id : null; if (state._rrPid === id) return; state._rrPid = id; render();
+  if (p) setTimeout(() => { const q = document.getElementById("rr-qty"); if (q) q.focus(); }, 80);
+}
+function repReturnAddItem() {
+  const rep = currentRep(); const p = scoped("products").find((x) => x.id === state._rrPid);
+  const qty = parseFloat((document.getElementById("rr-qty") || {}).value) || 0;
+  if (!p || qty <= 0) { flash("اختار الصنف وحط الكمية"); return; }
+  let price = Number(p.price) || 0;
+  const pe = document.getElementById("rr-price");
+  if (pe && repPermissions(rep).changePrice) price = parseFloat(pe.value) || price;
+  const ex = state._rrCart.find((c) => c.productId === p.id && c.price === price);
+  if (ex) ex.qty += qty; else state._rrCart.push({ productId: p.id, name: p.name, price, qty });
+  state._rrPid = null; SUGGEST_TYPED["rr-product"] = ""; render();
+  setTimeout(() => { const f = document.getElementById("rr-product"); if (f) f.focus(); }, 80);
+}
+function repReturnModalHtml() {
+  const rep = currentRep(); if (!rep) return "";
+  const settings = currentSettings();
+  const custs = repCollectCustomers(rep);
+  const sel = scoped("products").find((x) => x.id === state._rrPid);
+  const cart = state._rrCart || [];
+  const total = cart.reduce((a, c) => a + c.qty * c.price, 0);
+  const canPrice = repPermissions(rep).changePrice;
+  return `<div class="modal-title-row"><h3>↩️ مرتجع من زبون</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    ${custs.length === 0 ? `<div class="row-sub" style="color:var(--stamp);margin-bottom:10px;">ما في زباين مضافين إلك</div>` : suggestFieldHtml("rr-customer", custs, state._rrCustId, "الزبون — اكتب اسمه", "اكتب اسم الزبون...", "repResolveReturnField")}
+    ${suggestFieldHtml("rr-product", scoped("products"), state._rrPid, "🔍 الصنف المرتجع — اكتب اسمه", "اكتب أول حرفين من اسم الصنف...", "repResolveReturnField")}
+    ${sel ? `<div class="card" style="padding:10px 12px;margin-bottom:8px;background:var(--goldLight);border:none;">
+      <strong style="font-size:13.5px;">${esc(sel.name)}</strong>
+      <div class="row-flex" style="margin-top:8px;gap:8px;">
+        <input id="rr-qty" type="text" inputmode="decimal" class="mono flex1" placeholder="الكمية" style="font-size:16px;" onkeydown="if(event.key==='Enter'){event.preventDefault();repReturnAddItem();}" />
+        ${canPrice ? `<input id="rr-price" type="text" inputmode="decimal" class="mono flex1" value="${Number(sel.price) || 0}" placeholder="السعر" />` : `<span class="mono row-sub" style="align-self:center;">× ${fmt(Number(sel.price) || 0)}</span>`}
+        <button class="btn btn-green" style="padding:10px 14px;" onclick="repReturnAddItem()">＋</button>
+      </div></div>` : ""}
+    ${cart.length ? `<div class="card" style="margin:8px 0;">${cart.map((c, i) => `<div class="list-row"><span class="flex1 truncate">${esc(c.name)}</span><span class="mono">${fmt(c.qty)} × ${fmt(c.price)}</span><button class="icon-btn" onclick="state._rrCart.splice(${i},1);render();">🗑️</button></div>`).join("")}
+      <div class="list-row" style="font-weight:700;"><span class="flex1">مجموع المرتجع</span><span class="mono">${fmt(total)} ${esc(settings.currency)}</span></div></div>
+      <div class="row-sub" style="margin-bottom:8px;">بينخصم من حساب الزبون، والبضاعة بترجع ${rep.warehouseId === "__main__" ? "للمحل" : "لسيارتك"}.</div>
+      <button class="btn btn-stamp btn-block" onclick="repSaveReturn()">✅ تأكيد المرتجع</button>` : ""}`;
+}
+function repSaveReturn() {
+  const rep = currentRep(); if (!rep) return;
+  const cart = state._rrCart || [];
+  if (!state._rrCustId) { flash("اختار الزبون أول"); return; }
+  if (!cart.length) { flash("ضيف الأصناف المرتجعة"); return; }
+  const isMain = rep.warehouseId === "__main__";
+  const ts = new Date().toISOString();
+  if (isMain) {
+    persistScoped("products", scoped("products").map((p) => { const q = cart.filter((c) => c.productId === p.id).reduce((a, c) => a + c.qty, 0); return q ? { ...p, stock: (Number(p.stock) || 0) + q } : p; }));
+  } else {
+    cart.forEach((c) => addScoped("warehouseEntries", { id: uid(), warehouseId: rep.warehouseId, ts, type: "in", productName: c.name, qty: c.qty, unit: "", party: "", note: "مرتجع من زبون" }));
+  }
+  const total = cart.reduce((a, c) => a + c.qty * c.price, 0);
+  const sale = { id: uid(), ts, customerId: state._rrCustId, items: cart.map((c) => ({ productId: c.productId, name: c.name, price: c.price, qty: -c.qty })), subtotal: -total, tax: 0, discount: 0, total: -total, paidNow: 0, payType: "credit", isReturn: true, repId: rep.id, sourceWarehouseId: isMain ? null : rep.warehouseId };
+  addScoped("sales", sale);
+  state._repLastPrint = { kind: "sale", id: sale.id };
+  state._rrCart = []; state._rrPid = null;
+  flash("تم تسجيل المرتجع");
+  closeModal();
+}
 function repOpenCollect() {
   const rep = currentRep();
   if (!rep) return;
@@ -2513,6 +2630,15 @@ function repOpenCollect() {
   state._repCollectCustQuery = ""; state._repCollectCustOpen = false; state._repCollectCustId = "";
   state._repCollectAmount = ""; state._repCollectMethod = "cash";
   state.modal = { type: "repCollect" };
+  render();
+}
+function repResolveCustField(fieldId) {
+  const el = document.getElementById(fieldId); const rep = currentRep();
+  if (!el || !rep) return;
+  const c = repCollectCustomers(rep).find((o) => normName(o.name) === normName(el.value));
+  const id = c ? c.id : "";
+  if (fieldId === "rep-collect-customer") { if (state._repCollectCustId === id) return; state._repCollectCustId = id; }
+  else { if (state._repStmtCustId === id) return; state._repStmtCustId = id; }
   render();
 }
 function repCollectCustomers(rep) {
@@ -2530,7 +2656,7 @@ function repCollectModalHtml() {
   const selected = options.find((c) => c.id === state._repCollectCustId);
   return `<div class="modal-title-row"><h3>💰 تسجيل تحصيل</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     ${options.length === 0 ? `<div class="row-sub" style="color:var(--stamp);margin-bottom:10px;">لسه ما بعتش لحد — التحصيل بيبقى متاح بعد أول فاتورة بيع لعميل.</div>` : ""}
-    ${fieldSelect("rep-collect-customer", "العميل (من عملائك بس)", options, state._repCollectCustId, "اختر عميل")}
+    ${suggestFieldHtml("rep-collect-customer", options, state._repCollectCustId, "العميل — اكتب اسمه", "اكتب اسم العميل...", "repResolveCustField")}
     ${selected ? `<div class="row-sub" style="margin-bottom:10px;">رصيده الحالي: <strong class="mono">${fmt(customerBalance(selected))}</strong></div>` : ""}
     <label class="field"><span class="lbl">المبلغ</span><input type="text" inputmode="decimal" class="mono" value="${esc(state._repCollectAmount || "")}" oninput="state._repCollectAmount=this.value;" /></label>
     <div class="row-flex" style="margin-bottom:14px;">
@@ -2539,6 +2665,7 @@ function repCollectModalHtml() {
     </div>
     <button class="btn btn-green btn-block" onclick="repSaveCollect()">تسجيل التحصيل</button>`;
 }
+function repPrintVoucher(id) { const v = scoped("vouchers").find((x) => x.id === id); if (v) printVoucher("customer", v); }
 function repSaveCollect() {
   const rep = currentRep();
   if (!rep) return;
@@ -2552,6 +2679,7 @@ function repSaveCollect() {
     partyName: cust ? cust.name : "", amount, desc: `تحصيل عن طريق: ${rep.name}`, method,
     cashAmount: method === "cash" ? amount : 0, repId: rep.id,
   });
+  { const v0 = scoped("vouchers").filter((v) => v.repId === rep.id).sort((a, b) => new Date(b.ts) - new Date(a.ts))[0]; if (v0) state._repLastPrint = { kind: "voucher", id: v0.id }; }
   flash("تم تسجيل التحصيل");
   closeModal();
 }
@@ -2595,7 +2723,7 @@ function repStatementModalHtml() {
       </div>`;
   }
   return `<div class="modal-title-row"><h3>📋 كشف حساب عميل</h3><button class="close-x" onclick="closeModal()">✕</button></div>
-    ${options.length === 0 ? `<div class="row-sub" style="color:var(--stamp);">لسه ما بعتش لحد — الكشف بيبقى متاح بعد أول فاتورة بيع لعميل.</div>` : fieldSelect("rep-stmt-customer", "اختار العميل", options, selectedId, "اختر عميل")}
+    ${options.length === 0 ? `<div class="row-sub" style="color:var(--stamp);">لسه ما بعتش لحد — الكشف بيبقى متاح بعد أول فاتورة بيع لعميل.</div>` : suggestFieldHtml("rep-stmt-customer", options, selectedId, "العميل — اكتب اسمه", "اكتب اسم العميل...", "repResolveCustField")}
     ${body}`;
 }
 /* ===================== تسليم الكاش (مندوب ↔ مالك) ===================== */
@@ -2616,13 +2744,13 @@ function repHandoverModalHtml() {
   const cashVouchersToday = myVouchers.filter((v) => v.method !== "check" && new Date(v.ts).toDateString() === todayStr0).reduce((a, v) => a + (v.cashAmount ?? v.amount), 0);
   const myHandoversToday = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === rep.id && new Date(h.ts).toDateString() === todayStr0 && h.status !== "rejected");
   const handedOverToday = myHandoversToday.reduce((a, h) => a + h.amount, 0);
-  const cashToday = cashSalesToday + cashVouchersToday - handedOverToday;
+  const cashToday = Math.max(0, cashSalesToday + cashVouchersToday - handedOverToday);
   return `<div class="modal-title-row"><h3>📤 تسليم الكاش</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <div class="card" style="padding:16px;text-align:center;background:var(--greenLight);margin-bottom:14px;">
       <div class="row-sub">المبلغ اللي معاك دلوقتي</div>
       <div class="mono" style="font-weight:700;font-size:26px;color:var(--green);">${fmt(cashToday)} ${esc(settings.currency)}</div>
     </div>
-    <div class="row-sub" style="margin-bottom:14px;">بعد ما تدوس تأكيد، هيوصل طلب لصاحب الشركة إنك سلّمته ${fmt(cashToday)} دينار كاش — وهو اللي هيأكّد استلامه.</div>
+    <div class="row-sub" style="margin-bottom:14px;">بعد ما تدوس تأكيد، هيوصل طلب للحساب الرئيسي إنك سلّمته ${fmt(cashToday)} دينار كاش — وهو اللي هيأكّد استلامه.</div>
     <button class="btn btn-green btn-block" onclick="repSubmitHandover(${cashToday})">تأكيد طلب التسليم</button>`;
 }
 function repSubmitHandover(amount) {
@@ -2631,7 +2759,7 @@ function repSubmitHandover(amount) {
   const handovers = loadKey("cashHandovers", []) || [];
   handovers.push({ id: uid(), repId: rep.id, repName: rep.name, amount, ts: new Date().toISOString(), status: "pending" });
   saveKey("cashHandovers", handovers);
-  flash("تم إرسال طلب التسليم — في انتظار تأكيد صاحب الشركة");
+  flash("تم إرسال طلب التسليم — في انتظار تأكيد الحساب الرئيسي");
   closeModal();
 }
 function confirmHandover(handoverId) {
@@ -2640,7 +2768,7 @@ function confirmHandover(handoverId) {
   if (!h || h.status !== "pending") return;
   h.status = "confirmed"; h.confirmedAt = new Date().toISOString();
   saveKey("cashHandovers", handovers);
-  addScoped("manualCash", { id: uid(), ts: new Date().toISOString(), type: "in", amount: h.amount, desc: `تسليم كاش من المندوب: ${h.repName}` });
+  addScoped("manualCash", { id: uid(), ts: new Date().toISOString(), type: "in", amount: h.amount, desc: `تسليم كاش من المندوب: ${h.repName}`, handoverId: h.id });
   flash(`تم تأكيد استلام ${fmt(h.amount)} من ${h.repName}`);
   render();
   scheduleRepPublish(500);
@@ -2840,12 +2968,12 @@ function fieldSelect(id, label, options, selected, placeholder) {
     </select></label>`;
 }
 /* ===== حقل اسم مع قائمة اقتراحات (بديل datalist اللي ما بيشتغل داخل تطبيق الأندرويد) ===== */
-const SUGGEST = {};
+const SUGGEST = {}; var SUGGEST_TYPED = {};
 function normName(t) { return String(t || "").trim().toLowerCase().replace(/[أإآ]/g, "ا").replace(/ة/g, "ه").replace(/ى/g, "ي").replace(/\s+/g, " "); }
 function suggestFieldHtml(fieldId, options, selectedId, label, placeholder, onResolve, addKind) {
   const selected = options.find((c) => c.id === selectedId);
   SUGGEST[fieldId] = { names: options.map((o) => o.name), onResolve, addKind };
-  const typedNew = !selected ? (fieldId === "purchase-supplier" ? (state.purchaseForm || {})._typed : fieldId === "sale-customer" ? (state.saleForm || {})._typed : "") || "" : "";
+  const typedNew = !selected ? (fieldId === "purchase-supplier" ? (state.purchaseForm || {})._typed : fieldId === "sale-customer" ? (state.saleForm || {})._typed : (SUGGEST_TYPED[fieldId] || "")) || "" : "";
   return `<label class="field" style="margin-bottom:${selected ? 10 : 4}px;"><span class="lbl">${esc(label)}</span>
     <input id="${fieldId}" value="${esc(selected ? selected.name : typedNew)}" placeholder="${esc(placeholder || "اكتب اسم أو اختار من القائمة...")}" autocomplete="off" autocorrect="off" spellcheck="false"
       oninput="suggestUpdate('${fieldId}')" onfocus="suggestUpdate('${fieldId}')" onblur="setTimeout(() => suggestBlur('${fieldId}'), 150)" />
@@ -2856,6 +2984,7 @@ function suggestFieldHtml(fieldId, options, selectedId, label, placeholder, onRe
 function suggestUpdate(fieldId) {
   const cfg = SUGGEST[fieldId]; const el = document.getElementById(fieldId); const box = document.getElementById(fieldId + "-sug");
   if (!cfg || !el || !box) return;
+  SUGGEST_TYPED[fieldId] = el.value;
   // نحفظ المكتوب أول بأول عشان أي تحديث للشاشة ما يمسحه
   if (fieldId === "purchase-supplier" || fieldId === "sale-customer") {
     const isSup = fieldId === "purchase-supplier";
@@ -2872,23 +3001,34 @@ function suggestUpdate(fieldId) {
   const exact = q && cfg.names.some((n) => normName(n) === q);
   const rows = list.map((n, i) => `<div class="list-row" style="padding:9px 12px;cursor:pointer;" onpointerdown="event.preventDefault();suggestPick('${fieldId}', ${cfg.names.indexOf(n)})">${esc(n)}</div>`);
   if (q && !exact && cfg.addKind) rows.push(`<div class="list-row" style="padding:9px 12px;cursor:pointer;color:var(--green);font-weight:700;" onpointerdown="event.preventDefault();suggestAddNew('${fieldId}')">➕ ${cfg.addKind === "customer" ? "إضافة عميل جديد" : "إضافة مورد جديد"}: ${esc(el.value.trim())}</div>`);
-  if (!rows.length) { box.style.display = "none"; return; }
+  // القائمة إلها طول ثابت وإنت بتكتب، عشان الشاشة ما تكبر وتصغر مع كل حرف (كانت تهز)
+  if (!rows.length) {
+    if (!q) { box.style.display = "none"; return; }
+    rows.push(`<div class="row-sub" style="padding:12px;text-align:center;">ما في اسم بهالشكل</div>`);
+  }
   box.innerHTML = rows.join("");
+  box.style.height = "240px";
   box.style.display = "block";
-  try { setTimeout(() => el.scrollIntoView({ block: "start", behavior: "smooth" }), 250); } catch (e) {}
+  // نحرّك الشاشة مرة وحدة بس لما تبلش تكتب — مش مع كل حرف (كانت الشاشة تهز)
+  if (!cfg._scrolled) { cfg._scrolled = true; try { setTimeout(() => el.scrollIntoView({ block: "start", behavior: "auto" }), 250); } catch (e) {} }
 }
 function suggestPick(fieldId, idx) {
   const cfg = SUGGEST[fieldId]; const el = document.getElementById(fieldId);
   if (!cfg || !el) return;
   el.value = cfg.names[idx];
+  SUGGEST_TYPED[fieldId] = "";
+  window._suggestPickTs = Date.now(); // الكبسة نفسها ممكن توقع على الخلفية لما الكيبورد يتسكّر — ما نسكّر الشاشة بسببها
   const box = document.getElementById(fieldId + "-sug"); if (box) box.style.display = "none";
   try { el.blur(); } catch (e) {}
   window[cfg.onResolve](fieldId);
 }
 function suggestBlur(fieldId) {
   const cfg = SUGGEST[fieldId]; const el = document.getElementById(fieldId);
+  // الشاشة انرسمت من جديد والحقل لسا مفتوح (نفس الحقل): لا نسكّر القائمة
+  if (el && document.activeElement === el) return;
+  if (cfg) cfg._scrolled = false;
   const box = document.getElementById(fieldId + "-sug"); if (box) box.style.display = "none";
-  if (!cfg || !el || document.activeElement === el) return;
+  if (!cfg || !el) return;
   window[cfg.onResolve](fieldId);
 }
 function suggestAddNew(fieldId) {
@@ -3012,8 +3152,16 @@ function selectPurchaseSupplier(id) { state.purchaseForm.supplierId = id; state.
 // النوافذ الصغيرة اللي بتنفتح من جوّا الفاتورة (الكاميرا، حاسبة السعر، صنف جديد) بترجع للفاتورة لما تتسكّر
 function cartModalNow() { return state.modal && (state.modal.type === "saleCart" || state.modal.type === "purchaseCart") ? state.modal.type : null; }
 function closeModal() {
-  const back = state.modal && state.modal._returnTo;
-  state.modal = back ? { type: back } : null;
+  for (const k in SUGGEST_TYPED) SUGGEST_TYPED[k] = "";
+  if (state.modal && state.modal.type === "scan") { try { stopScanner(); } catch (e) {} }
+  let back = state.modal && state.modal._returnTo;
+  // سكّرنا الكاميرا من غير ما نصوّر: نرجع لنفس الشاشة اللي كنا فيها، مع اللي كان مكتوب
+  if (state.modal && state.modal.type === "scan" && state.modal.context === "field" && pendingCapture && back && typeof back === "object") {
+    const cap = pendingCapture; pendingCapture = null;
+    if (cap.kind === "product" && back.type === "product") back = { ...back, product: { ...(back.product || {}), ...cap.vals, barcode: (back.product || {}).barcode || "" } };
+    else if (cap.kind === "newItem" && back.type === "newItem") back = { ...back, name: cap.vals.name };
+  }
+  state.modal = back ? (typeof back === "object" ? back : { type: back }) : null;
   render(); applyPendingCloudSnapshotIfSafe();
 }
 /* ===== زر الرجوع تبع الجوال: يرجع خطوة لورا بدل ما يطلع من التطبيق ===== */
@@ -3154,6 +3302,7 @@ function updateProductPickerResults(resultsId, queryKey) {
   if (!cache || !el) { render(); return; }
   el.innerHTML = productPickerResultsHtml(cache.products, state[queryKey] || "", cache.opts);
 }
+function repNameOf(id) { const r = (loadKey("reps", []) || []).find((x) => x.id === id); return r ? r.name : "مندوب"; }
 function renderSales() {
   const settings = currentSettings();
   const products = scoped("products");
@@ -3190,7 +3339,7 @@ function renderSalesInvoiceListInner() {
     const label = s.isReturn ? "🔄 مرتجع" : s.quick ? "🧾 فاتورة سريعة" : "فاتورة";
     const noSuffix = s.quick && s.invoiceNo ? ` (${esc(s.invoiceNo)})` : "";
     return `<div class="list-row">
-      <div class="flex1"><div class="truncate" style="font-size:12.5px;">${label} <bdi>${docNo(s, "sales")}</bdi>${noSuffix} · ${s.quick ? "بدون أصناف" : s.items.length + " صنف"} ${s.payType === "credit" && !s.isReturn ? "· آجل" : ""}${cust ? " · " + esc(cust) : ""}</div><div class="mono row-sub">${fmtDateTime(s.ts)}</div></div>
+      <div class="flex1"><div class="truncate" style="font-size:12.5px;">${label} <bdi>${docNo(s, "sales")}</bdi>${noSuffix} · ${s.quick ? "بدون أصناف" : s.items.length + " صنف"} ${s.payType === "credit" && !s.isReturn ? "· آجل" : ""}${cust ? " · " + esc(cust) : ""}${s.repId ? ' · <span style="color:#2f5233;font-weight:700;">🚚 ' + esc(repNameOf(s.repId)) + '</span>' : ""}</div><div class="mono row-sub">${fmtDateTime(s.ts)}</div></div>
       <span class="mono" style="font-weight:700;">${fmt(s.total)}</span>
       <button class="icon-btn" style="color:var(--green);" onclick="printSale('${s.id}')">🖨</button>
       <button class="icon-btn" style="color:var(--inkSoft);" onclick="startEditSale('${s.id}')">✎</button>
@@ -3550,6 +3699,7 @@ function completeSale() {
     }
     sale = { id: uid(), ts: new Date().toISOString(), customerId, items: state.cart.map((c) => ({ productId: c.productId, name: c.name, price: c.price, qty: c.qty })), subtotal, tax, discount, total, paidNow: paidNum, payType: isCheck ? "credit" : payType, checkPayment: isCheck, sourceWarehouseId: sourceWarehouseId || undefined, repId: state._activeRepId || undefined };
     addScoped("sales", sale);
+    if (REP_MODE || state._activeRepId) state._repLastPrint = { kind: "sale", id: sale.id };
     if (settings.autoPrintSale) {
       const partyName = customerId ? ((scoped("customers").find((c) => c.id === customerId) || {}).name || "") : "عميل نقدي";
       setTimeout(() => printInvoice({ ...sale, partyName }, "sale"), 300);
@@ -3594,8 +3744,9 @@ function completeQuickSale() {
     persistScoped("sales", scoped("sales").map((s) => (s.id === state.editingSaleId ? sale : s)));
     flash("تم تحديث الفاتورة");
   } else {
-    sale = { id: uid(), ts: new Date().toISOString(), customerId, items: [], quick: true, invoiceNo: state.saleForm.invoiceNo || "", photo: state.saleForm.photo || null, total, subtotal: total, tax: 0, discount: 0, paidNow: paidNum, payType: isCheck ? "credit" : payType, checkPayment: isCheck };
+    sale = { id: uid(), ts: new Date().toISOString(), customerId, items: [], quick: true, invoiceNo: state.saleForm.invoiceNo || "", photo: state.saleForm.photo || null, total, subtotal: total, tax: 0, discount: 0, paidNow: paidNum, payType: isCheck ? "credit" : payType, checkPayment: isCheck, repId: state._activeRepId || (REP_MODE && currentRep() ? currentRep().id : undefined) };
     const saved = addScoped("sales", sale);
+    if (REP_MODE || state._activeRepId) state._repLastPrint = { kind: "sale", id: sale.id };
     if (!saved) {
       flash("❌ فشل حفظ الفاتورة! مساحة التخزين ممتلئة — جرب تشيل الصورة أو امسح صور فواتير قديمة");
       return;
@@ -3641,20 +3792,27 @@ function deleteSale(id) {
   const s = scoped("sales").find((x) => x.id === id);
   if (!s) return;
   if (!confirm("متأكد إنك بدك تمسح فاتورة المبيعات هاي؟ ما في رجعة بعد الحذف.")) return;
-  const restore = {};
-  s.items.forEach((it) => { restore[it.productId] = (restore[it.productId] || 0) + it.qty; });
-  persistScoped("products", scoped("products").map((p) => (restore[p.id] ? { ...p, stock: p.stock + restore[p.id] } : p)));
+  if (s.sourceWarehouseId) {
+    // الفاتورة طلعت من مستودع/سيارة: البضاعة بترجع لنفس المستودع، مش للمحل
+    const ts = new Date().toISOString();
+    s.items.forEach((it) => {
+      const q = Number(it.qty) || 0; if (!q) return;
+      addScoped("warehouseEntries", { id: uid(), warehouseId: s.sourceWarehouseId, ts, type: q > 0 ? "in" : "out", productName: it.name, qty: Math.abs(q), unit: "", party: "", note: "إلغاء فاتورة " + (docNo(s, "sales") || "") });
+    });
+  } else {
+    const restore = {};
+    s.items.forEach((it) => { restore[it.productId] = (restore[it.productId] || 0) + it.qty; });
+    persistScoped("products", scoped("products").map((p) => (restore[p.id] ? { ...p, stock: p.stock + restore[p.id] } : p)));
+  }
   persistScoped("sales", scoped("sales").filter((x) => x.id !== id));
   if (state.editingSaleId === id) resetSaleForm(); else render();
-  flash("تم إلغاء الفاتورة");
+  flash(s.sourceWarehouseId ? "تم إلغاء الفاتورة ورجعت البضاعة للمستودع" : "تم إلغاء الفاتورة");
 }
 
 /* keep select bound to state without full re-render loop issues */
 document.addEventListener("change", (e) => {
   // ملحوظة: "sale-customer" بقى حقل بحث (datalist)، بيتعامل معاه resolveDatalistCustomer بدل هنا
   // ملحوظة: "purchase-supplier" بقى حقل بحث (datalist)، بيتعامل معاه resolveDatalistPurchaseSupplier بدل هنا
-  if (e.target.id === "rep-collect-customer") { state._repCollectCustId = e.target.value; render(); }
-  if (e.target.id === "rep-stmt-customer") { state._repStmtCustId = e.target.value; render(); }
 });
 
 /* ===================== PURCHASES SCREEN ===================== */
@@ -3995,7 +4153,8 @@ function saveNewItem() {
 let scannerStream = null;
 let pendingCapture = null; // { kind: 'product'|'newItem', vals }
 function openScanModal(context) {
-  state.modal = { type: "scan", context, _returnTo: cartModalNow(), onDetect: (code) => handleScanResult(context, code) };
+  const prev = state.modal && state.modal.type !== "scan" ? { ...state.modal } : (state.modal && state.modal._returnTo) || null;
+  state.modal = { type: "scan", context, _returnTo: prev, onDetect: (code) => handleScanResult(context, code) };
   render();
 }
 function scanIntoBarcodeField() {
@@ -4041,7 +4200,7 @@ function handleScanResult(context, code) {
         price: cap.vals.price, cost: cap.vals.cost, stock: cap.vals.stock, minStock: cap.vals.minStock,
       } };
     } else {
-      const existing = scoped("products").find((p) => p.barcode && p.barcode === code);
+      const existing = scoped("products").find((p) => p.barcode && barcodeMatches(p.barcode, code));
       if (existing) {
         flash(`⚠️ الباركود ده مسجّل أصلاً على صنف اسمه "${existing.name}"`);
         state.modal = { type: "product", product: existing };
@@ -4056,7 +4215,7 @@ function handleScanResult(context, code) {
   if (context === "sale" || context === "purchase") {
     state.modal = { type: context === "sale" ? "saleCart" : "purchaseCart" };
     const products = scoped("products");
-    const found = products.find((p) => p.barcode && p.barcode === code);
+    const found = products.find((p) => p.barcode && barcodeMatches(p.barcode, code));
     if (context === "sale") {
       if (found) { addToCart(found.id); flash("تمت إضافة: " + found.name); }
       else { state._cartQ = code; state._cartAddOpen = true; flash("لم يتم العثور على منتج بهذا الباركود"); render(); }
@@ -4069,17 +4228,46 @@ function handleScanResult(context, code) {
   if (context === "transfer") {
     state.modal = { type: "warehouseDetail", id: state._transferScanWarehouseId };
     const products = scoped("products");
-    const found = products.find((p) => p.barcode && p.barcode === code);
-    if (found) { state._transferScannedProductId = found.id; flash("لاقيت: " + found.name + " — دلوقتي حط الكمية ودوس إضافة"); }
+    const found = products.find((p) => p.barcode && barcodeMatches(p.barcode, code));
+    if (found) { state._transferScannedProductId = found.id; flash("✅ " + found.name + " — اكتب الكمية"); }
     else { flash("لم يتم العثور على منتج بهذا الباركود"); }
     render();
+    setTimeout(() => { const q = document.getElementById("we-qty"); if (q && found) q.focus(); }, 120);
     return;
   }
   closeModal();
   const products = scoped("products");
-  const found = products.find((p) => p.barcode && p.barcode === code);
+  const found = products.find((p) => p.barcode && barcodeMatches(p.barcode, code));
 }
-async function startScanner(onDetect) {
+// مطابقة الباركود مع تسامح بسيط (EAN-13 مقابل UPC-A، ورقم التحقق الأخير)
+function barcodeMatches(saved, code) {
+  saved = String(saved || "").trim(); code = String(code || "").trim();
+  if (!saved || !code) return false;
+  if (saved === code) return true;
+  if (/^\d+$/.test(saved) && /^\d+$/.test(code)) {
+    if (code.length === 13 && code[0] === "0" && code.slice(1) === saved) return true;
+    if (saved.length === 13 && saved[0] === "0" && saved.slice(1) === code) return true;
+    if (code.length === 13 && saved.length === 12 && code.slice(0, 12) === saved) return true;
+  }
+  return false;
+}
+// بنقبل القراءة بس لما تتأكد: إذا طابقت صنف موجود فوراً، وإلا لازم نفس الرقم ينقرا 3 مرات ورا بعض
+function makeScanAcceptor(onDetect) {
+  const known = scoped("products").map((p) => String(p.barcode || "").trim()).filter(Boolean);
+  let last = "", count = 0, done = false;
+  return (raw) => {
+    if (done) return true;
+    const v = String(raw || "").trim();
+    if (!v) return false;
+    const hit = known.find((k) => barcodeMatches(k, v));
+    if (hit) { done = true; onDetect(hit); return true; }
+    if (v === last) count++; else { last = v; count = 1; }
+    if (count >= 3) { done = true; onDetect(v); return true; }
+    return false;
+  };
+}
+async function startScanner(onDetectRaw) {
+  const onDetect = makeScanAcceptor(onDetectRaw);
   const video = document.getElementById("scanner-video");
   const errBox = document.getElementById("scanner-error");
   try {
@@ -4092,9 +4280,17 @@ async function startScanner(onDetect) {
       // بعض الأجهزة (خصوصًا داخل التطبيق) ما فيها قارئ باركود جاهز، فبنحمّل مكتبة بديلة
       try {
         await loadZxing();
-        zxingReader = new window.ZXing.BrowserMultiFormatReader();
+        let hints;
+        try {
+          const Z = window.ZXing; hints = new Map();
+          hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A, Z.BarcodeFormat.UPC_E, Z.BarcodeFormat.CODE_128]);
+        } catch (e) { hints = undefined; }
+        zxingReader = new window.ZXing.BrowserMultiFormatReader(hints);
         zxingReader.decodeFromVideoElementContinuously(video, (result) => {
-          if (result && state.modal && state.modal.type === "scan") { stopZxing(); onDetect(result.getText()); }
+          if (result && state.modal && state.modal.type === "scan") {
+            const t = result.getText();
+            if (onDetect(t)) stopZxing();
+          }
         });
       } catch (e2) {
         console.error("zxing failed", e2);
@@ -4102,12 +4298,14 @@ async function startScanner(onDetect) {
       }
       return;
     }
-    const detector = new window.BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "code_93", "itf", "codabar", "qr_code"] });
+    let fmts = ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"];
+    try { const sup = await window.BarcodeDetector.getSupportedFormats(); fmts = fmts.filter((f) => sup.includes(f)); } catch (e) {}
+    const detector = new window.BarcodeDetector({ formats: fmts });
     const tick = async () => {
       if (!state.modal || state.modal.type !== "scan") return;
       try {
         const codes = await detector.detect(video);
-        if (codes && codes[0]) { onDetect(codes[0].rawValue); return; }
+        for (const c of codes || []) { if (onDetect(c.rawValue)) return; }
       } catch (e) {}
       requestAnimationFrame(tick);
     };
@@ -4541,6 +4739,14 @@ function renderCashbox() {
     </div>
   </div>
   <div class="card" style="padding:14px;margin-bottom:14px;">
+    <div class="row-title" style="margin-bottom:10px;">📋 كشف النقدية</div>
+    <div class="grid2" style="margin-bottom:10px;">
+      <label class="field" style="margin:0;"><span class="lbl">من</span><input id="cs-from" type="date" value="${esc(state._csFrom || cashStmtDefaultFrom())}" onchange="state._csFrom=this.value" /></label>
+      <label class="field" style="margin:0;"><span class="lbl">إلى</span><input id="cs-to" type="date" value="${esc(state._csTo || todayISO())}" onchange="state._csTo=this.value" /></label>
+    </div>
+    <button class="btn btn-green btn-block" onclick="printCashStatement()">🖨 عرض / طباعة الكشف</button>
+  </div>
+  <div class="card" style="padding:14px;margin-bottom:14px;">
     <div class="row-title" style="margin-bottom:10px;">💵 حركة نقدية يدوية</div>
     <div class="row-flex" style="margin-bottom:10px;">
       <button class="btn ${state._cbDir !== "out" ? "btn-green" : "btn-ghost"} flex1" onclick="state._cbDir='in';render();">إضافة للصندوق</button>
@@ -4618,10 +4824,13 @@ function renderCashbox() {
     }, "")}
   </div>
   ${issuedChecksSectionHtml()}
-  <div class="section-title">آخر الحركات النقدية</div>`;
+  <div class="flex-between" style="margin-bottom:8px;">
+    <div class="section-title" style="margin:0;">${state._cbAll ? "كل الحركات النقدية" : "آخر الحركات النقدية"}</div>
+    ${ledger.length > 20 ? `<button class="btn btn-ghost" style="font-size:11px;padding:5px 10px;" onclick="state._cbAll=!state._cbAll;render();">${state._cbAll ? "آخر 20 بس" : "عرض الكل (" + ledger.length + ")"}</button>` : ""}
+  </div>`;
   if (ledger.length === 0) html += emptyState("لا توجد حركات بعد", true);
   else {
-    html += `<div>` + ledger.slice(0, 20).map((e) => `<div class="card" style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:8px;">
+    html += `<div>` + (state._cbAll ? ledger : ledger.slice(0, 20)).map((e) => `<div class="card" style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:8px;">
       <span>${e.type === "in" ? "⬇️" : "⬆️"}</span>
       <div class="flex1"><div class="truncate" style="font-size:12.5px;">${esc(e.desc)}</div><div class="mono row-sub">${fmtDateTime(e.ts)}</div></div>
       <span class="mono" style="font-weight:700;color:${e.type === "in" ? "var(--green)" : "var(--stamp)"};">${e.type === "in" ? "+" : "-"}${fmt(e.amount)}</span>
@@ -4684,7 +4893,15 @@ function saveManualCash() {
   flash("تم تحديث الصندوق");
   render();
 }
-function deleteManualCash(rawId) { if (!confirm("متأكد إنك بدك تمسح الحركة هاي؟ ما في رجعة بعد الحذف.")) return; persistScoped("manualCash", scoped("manualCash").filter((m) => m.id !== rawId)); flash("تم حذف الحركة"); render(); }
+function deleteManualCash(rawId) { if (!confirm("متأكد إنك بدك تمسح الحركة هاي؟ ما في رجعة بعد الحذف.")) return;
+  const m0 = scoped("manualCash").find((m) => m.id === rawId);
+  if (m0 && String(m0.desc || "").startsWith("تسليم كاش من المندوب")) {
+    // نلغي التسليم كمان عشان "كاش اليوم" عند المندوب يرجع صح
+    const hs = loadKey("cashHandovers", []) || [];
+    const h = m0.handoverId ? hs.find((x) => x.id === m0.handoverId) : hs.find((x) => x.status === "confirmed" && Math.abs(x.amount - m0.amount) < 1e-9 && m0.desc.endsWith(x.repName || "\u0000"));
+    if (h) { h.status = "rejected"; saveKey("cashHandovers", hs); scheduleRepPublish(500); }
+  }
+  persistScoped("manualCash", scoped("manualCash").filter((m) => m.id !== rawId)); flash("تم حذف الحركة"); render(); }
 
 /* ===================== INVENTORY ===================== */
 function renderInventory() {
@@ -4772,17 +4989,30 @@ function barcodeLabelsModalHtml() {
         <input type="text" inputmode="numeric" class="mono" style="width:50px;text-align:center;padding:5px;" placeholder="0" value="${state._barcodeQty[p.id] || ""}" oninput="state._barcodeQty['${p.id}']=this.value;" />
       </div>`).join("")}
     </div>
-    <button class="btn btn-gold btn-block" onclick="printBarcodeLabels()">🖨 طباعة الملصقات</button>`;
+    <button class="btn btn-gold btn-block" onclick="printBarcodeLabelsBulk()">🖨 طباعة الملصقات</button>`;
+}
+// بنخلّي الباركود يتصغّر جوّا الملصق بدل ما يطلع برّاه
+function barcodeFormatFor(code) {
+  const c = String(code || "");
+  if (/^\d{13}$/.test(c)) { let sum = 0; for (let i = 0; i < 12; i++) sum += Number(c[i]) * (i % 2 ? 3 : 1); if ((10 - (sum % 10)) % 10 === Number(c[12])) return "EAN13"; }
+  return "CODE128";
+}
+function fitBarcodeSvg(el) {
+  try {
+    const w = parseFloat(el.getAttribute("width")), h = parseFloat(el.getAttribute("height"));
+    if (w && h) { el.setAttribute("viewBox", `0 0 ${w} ${h}`); el.setAttribute("width", "100%"); el.setAttribute("height", "46"); el.setAttribute("preserveAspectRatio", "none"); }
+  } catch (e) {}
 }
 function getOrCreateBarcode(product) {
   if (product.barcode && product.barcode.trim()) return product.barcode.trim();
   let code = "";
-  do { code = "2" + String(Math.floor(Math.random() * 100000000000)).padStart(11, "0"); }
+  const ean13 = (d12) => { let sum = 0; for (let i = 0; i < 12; i++) sum += Number(d12[i]) * (i % 2 ? 3 : 1); return d12 + ((10 - (sum % 10)) % 10); };
+  do { code = ean13("2" + String(Math.floor(Math.random() * 100000000000)).padStart(11, "0")); }
   while (scoped("products").some((p) => p.barcode === code));
   persistScoped("products", scoped("products").map((p) => (p.id === product.id ? { ...p, barcode: code } : p)));
   return code;
 }
-function printBarcodeLabels() {
+function printBarcodeLabelsBulk() {
   const settings = currentSettings();
   const products = scoped("products");
   const items = [];
@@ -4797,17 +5027,13 @@ function printBarcodeLabels() {
   if (items.length === 0) { flash("حط كمية للأصناف اللي عايز تطبعها"); return; }
   const labelsHtml = items.map((it, i) => `
     <div style="width:31%;display:inline-block;border:1px dashed #999;border-radius:6px;padding:8px 4px;margin:4px 1%;text-align:center;page-break-inside:avoid;break-inside:avoid;vertical-align:top;">
-      <div style="font-size:10px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(it.name)}</div>
-      <svg class="barcode-svg" data-value="${esc(it.code)}" style="width:100%;height:40px;"></svg>
-      <div style="font-size:11px;font-weight:700;">${fmt(it.price)} ${esc(settings.currency)}</div>
+      <svg class="barcode-svg" data-value="${esc(it.code)}" style="width:100%;height:46px;"></svg>
     </div>`).join("");
-  const html = `${printHead(settings)}
-    <div style="text-align:center;font-weight:700;font-size:13px;margin-bottom:10px;">ملصقات باركود</div>
-    <div>${labelsHtml}</div>`;
+  const html = `<div>${labelsHtml}</div>`;
   showPrint(html);
   setTimeout(() => {
     document.querySelectorAll(".barcode-svg").forEach((el) => {
-      try { window.JsBarcode(el, el.dataset.value, { format: "CODE128", displayValue: true, fontSize: 11, height: 34, margin: 2 }); } catch (e) { console.error("barcode render failed", e); }
+      try { window.JsBarcode(el, el.dataset.value, { format: barcodeFormatFor(el.dataset.value), displayValue: false, height: 44, margin: 4 }); fitBarcodeSvg(el); } catch (e) { console.error("barcode render failed", e); }
     });
   }, 30);
   closeModal();
@@ -5052,18 +5278,35 @@ function deleteWarehouse(id) {
   persistScoped("warehouseEntries", scoped("warehouseEntries").filter((e) => e.warehouseId !== id));
   closeModal();
 }
-function openWarehouseDetail(id) { state.modal = { type: "warehouseDetail", id }; render(); }
+function openWarehouseDetail(id) { state.modal = { type: "warehouseDetail", id }; state._whEntryType = "transfer_in"; state._lastTransfer = null; state._whShowBal = false; state._transferCart = []; state._transferScannedProductId = null; render(); }
+function resolveTransferProduct(fieldId) {
+  const el = document.getElementById(fieldId); if (!el) return;
+  const p = scoped("products").find((x) => normName(x.name) === normName(el.value));
+  const id = p ? p.id : null;
+  if (state._transferScannedProductId === id) return;
+  state._transferScannedProductId = id;
+  render();
+  if (p) setTimeout(() => { const q = document.getElementById("we-qty"); if (q) q.focus(); }, 80);
+}
 function addTransferCartItem() {
-  const productId = document.getElementById("we-product-select").value;
+  const productId = state._transferScannedProductId || "";
   const product = scoped("products").find((p) => p.id === productId);
   const qty = parseFloat(document.getElementById("we-qty").value) || 0;
   if (!product || qty <= 0) { flash("اختار صنف وحط كمية أول"); return; }
   if (!state._transferCart) state._transferCart = [];
   const existing = state._transferCart.find((c) => c.productId === productId);
+  {
+    const isIn = state._whEntryType === "transfer_in";
+    const whId = state.modal && state.modal.id;
+    const avail = isIn ? (Number(product.stock) || 0) : scoped("warehouseEntries").filter((e) => e.warehouseId === whId && e.productName === product.name).reduce((a, e) => a + (e.type === "in" ? e.qty : -e.qty), 0);
+    const want = qty + (existing ? existing.qty : 0);
+    if (want > avail + 1e-9) { flash(`❌ ما بينفع — المتوفر ${isIn ? "بالمحل" : "بالمستودع"} من "${product.name}" بس ${fmt(avail)}${existing ? ` (وضايف منه ${fmt(existing.qty)})` : ""}`); return; }
+  }
   if (existing) existing.qty += qty;
   else state._transferCart.push({ productId, name: product.name, qty });
-  state._transferScannedProductId = null;
+  state._transferScannedProductId = null; SUGGEST_TYPED["tr-product"] = "";
   render();
+  setTimeout(() => { const f = document.getElementById("tr-product"); if (f) f.focus(); }, 80);
 }
 function removeTransferCartItem(index) {
   state._transferCart.splice(index, 1);
@@ -5073,7 +5316,7 @@ function confirmTransfer(warehouseId) {
   const mode = state._whEntryType;
   const isIn = mode === "transfer_in";
   const cart = state._transferCart && state._transferCart.length > 0 ? state._transferCart : (() => {
-    const productId = document.getElementById("we-product-select").value;
+    const productId = state._transferScannedProductId || "";
     const product = scoped("products").find((p) => p.id === productId);
     const qty = parseFloat(document.getElementById("we-qty").value) || 0;
     return product && qty > 0 ? [{ productId, name: product.name, qty }] : [];
@@ -5093,17 +5336,19 @@ function confirmTransfer(warehouseId) {
     }
   }
 
+  const batch = uid(); const batchTs = new Date().toISOString();
   cart.forEach((item) => {
     if (isIn) {
       persistScoped("products", scoped("products").map((p) => (p.id === item.productId ? { ...p, stock: p.stock - item.qty } : p)));
-      addScoped("warehouseEntries", { id: uid(), warehouseId, ts: new Date().toISOString(), type: "in", productName: item.name, qty: item.qty, unit: "", party: "", note: "منقول من المحل" });
+      addScoped("warehouseEntries", { id: uid(), warehouseId, ts: batchTs, type: "in", productName: item.name, qty: item.qty, unit: "", party: "", note: "منقول من المحل", batch });
     } else {
       persistScoped("products", scoped("products").map((p) => (p.id === item.productId ? { ...p, stock: p.stock + item.qty } : p)));
-      addScoped("warehouseEntries", { id: uid(), warehouseId, ts: new Date().toISOString(), type: "out", productName: item.name, qty: item.qty, unit: "", party: "", note: "منقول للمحل" });
+      addScoped("warehouseEntries", { id: uid(), warehouseId, ts: batchTs, type: "out", productName: item.name, qty: item.qty, unit: "", party: "", note: "منقول للمحل", batch });
     }
   });
   flash(`تم نقل ${cart.length} صنف ${isIn ? "للمستودع" : "للمحل"}`);
-  state._transferCart = [];
+  state._transferCart = []; state._transferScannedProductId = null;
+  state._lastTransfer = { warehouseId, batch, isIn };
   render();
 }
 function saveWarehouseEntry(warehouseId) {
@@ -5435,16 +5680,20 @@ function showPrint(innerHtml) {
   const nativeBtn = isAndroidPrintBridge()
     ? `<button class="btn btn-gold btn-block" onclick="printViaNativeBridge(this)">🖨 اطبع على الطابعة الحرارية (بلوتوث)</button>
        <button class="btn btn-ghost btn-block" style="font-size:11px;padding:6px;" onclick="forgetSavedPrinter()">🔄 تغيير الطابعة المحفوظة</button>`
-    : `<button class="btn btn-gold btn-block" onclick="printViaBluetooth(this)">🔵 اطبع مباشرة عبر البلوتوث (بدون تطبيق خارجي)</button>`;
-  el.innerHTML = `<div id="print-capture" style="font-family:'Courier New',monospace;background:#fff;color:#000;padding:8px;">${innerHtml}</div>
-    <div class="no-print" style="margin-top:16px;display:flex;flex-direction:column;gap:8px;">
+    : `<button class="btn btn-gold btn-block" onclick="printViaBluetooth(this)">🔵 اطبع مباشرة عبر البلوتوث</button>
+       <div style="display:flex;gap:8px;"><button class="btn btn-ghost flex1" style="font-size:11px;padding:6px;" onclick="printViaBluetooth(this, true)">🔄 اختار طابعة ثانية</button><button class="btn btn-ghost flex1" style="font-size:11px;padding:6px;" onclick="btToggleMode()">⚙️ جرّب الوضع الثاني</button></div>
+       <button class="btn btn-ghost btn-block" style="font-size:11.5px;padding:7px;border:1.5px dashed var(--gold);" onclick="btTestChannels(this)">🧪 ما طبعت؟ اكبس هون — بيجرّب كل الطرق</button>`;
+  el.innerHTML = `<div class="print-sheet">
+    <div class="no-print" style="margin-bottom:12px;display:flex;flex-direction:column;gap:8px;">
+      ${nativeBtn}
+      <div id="bt-print-status" style="font-size:12px;color:var(--ink);text-align:center;font-weight:700;"></div>
       <div style="display:flex;gap:8px;">
         <button class="btn btn-green flex1" onclick="systemPrint()">🖨 طباعة (مشاركة النظام)</button>
-        <button class="btn btn-ghost" onclick="document.getElementById('print-root').remove()">إغلاق</button>
+        <button class="btn btn-ghost" onclick="document.getElementById('print-root').remove()">✕ إغلاق</button>
       </div>
-      ${nativeBtn}
-      <div id="bt-print-status" style="font-size:11px;color:var(--inkSoft);text-align:center;"></div>
-    </div>`;
+    </div>
+    <div id="print-capture" style="font-family:'Courier New',monospace;background:#fff;color:#000;padding:8px;">${innerHtml}</div></div>`;
+  el.scrollTop = 0;
 }
 /* ===================== طباعة مباشرة عبر البلوتوث (Web Bluetooth + ESC/POS raster) ===================== */
 const BT_PRINT_CANDIDATE_UUIDS = [
@@ -5456,14 +5705,16 @@ const BT_PRINT_CANDIDATE_UUIDS = [
 ];
 async function findWritableCharacteristic(server) {
   const services = await server.getPrimaryServices();
+  const PREF = ["00002af1-0000-1000-8000-00805f9b34fb", "49535343-8841-43f4-a8d4-ecbe34729bb3", "0000ffe1-0000-1000-8000-00805f9b34fb", "0000ff02-0000-1000-8000-00805f9b34fb", "0000fff2-0000-1000-8000-00805f9b34fb"];
+  const all = [];
   for (const svc of services) {
     let chars = [];
     try { chars = await svc.getCharacteristics(); } catch (e) { continue; }
-    for (const ch of chars) {
-      if (ch.properties.write || ch.properties.writeWithoutResponse) return ch;
-    }
+    for (const ch of chars) if (ch.properties.write || ch.properties.writeWithoutResponse) all.push(ch);
   }
-  return null;
+  // القناة المعروفة للطباعة أولاً، وبعدها أي قناة بتكتب بدون رد (أسرع)، وبعدها أي قناة
+  const saved = (localStorage.getItem("btCharUuid") || "").toLowerCase();
+  return (saved && all.find((c) => String(c.uuid).toLowerCase() === saved)) || all.find((c) => PREF.includes(String(c.uuid).toLowerCase())) || all.find((c) => c.properties.writeWithoutResponse) || all[0] || null;
 }
 function btPrintStatus(msg) {
   const el = document.getElementById("bt-print-status");
@@ -5663,33 +5914,120 @@ function canvasToEscPosRaster(canvas) {
   }
   return new Uint8Array(out);
 }
-async function printViaBluetooth(btn) {
+var _btDevice = null, _btChar = null;
+async function btGetCharacteristic(forcePick) {
+  if (!forcePick && _btDevice && _btChar && _btDevice.gatt && _btDevice.gatt.connected) return _btChar;
+  let device = !forcePick && _btDevice;
+  if (!device) {
+    btPrintStatus("اختار الطابعة من القائمة…");
+    device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: BT_PRINT_CANDIDATE_UUIDS });
+  }
+  btPrintStatus("جاري الاتصال بـ " + (device.name || "الطابعة") + "…");
+  const server = await device.gatt.connect();
+  const ch = await findWritableCharacteristic(server);
+  if (!ch) throw new Error("ما لقيت قناة كتابة على هالطابعة");
+  _btDevice = device; _btChar = ch;
+  try { localStorage.setItem("btWebPrinterName", device.name || ""); } catch (e) {}
+  return ch;
+}
+async function printViaBluetooth(btn, forcePick) {
   if (!navigator.bluetooth) {
-    alert("متصفحك ما بيدعم الطباعة المباشرة بالبلوتوث. جرب افتح الصفحة من متصفح Chrome.");
+    btPrintStatus("❌ هالمتصفح ما بيدعم البلوتوث — افتح اللينك من Chrome.");
     return;
   }
   try {
     if (btn) btn.disabled = true;
-    btPrintStatus("جاري البحث عن الطابعة… اختارها من القائمة");
-    const device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: BT_PRINT_CANDIDATE_UUIDS });
-    btPrintStatus("جاري الاتصال بـ " + (device.name || "الطابعة") + "…");
-    const server = await device.gatt.connect();
-    const characteristic = await findWritableCharacteristic(server);
-    if (!characteristic) { btPrintStatus("ما لقيت قناة كتابة على هالجهاز — جرب طريقة الطباعة العادية."); return; }
+    const ch = await btGetCharacteristic(forcePick);
     btPrintStatus("جاري تجهيز الفاتورة…");
-    const canvas = renderPrintRootToCanvas();
-    const imgBytes = canvasToEscPosRaster(canvas);
-    const init = new Uint8Array([0x1b, 0x40]);
-    const feedCut = new Uint8Array([0x1b, 0x64, 0x04, 0x1d, 0x56, 0x01]);
-    btPrintStatus("جاري الطباعة…");
-    await writeInChunks(characteristic, init, 20);
-    await writeInChunks(characteristic, imgBytes, 20);
-    await writeInChunks(characteristic, feedCut, 20);
-    btPrintStatus("✅ تم إرسال الفاتورة للطابعة");
+    // نفس لغة الطابعة اللي بتشتغل بتطبيق دفتر (TSPL)، ولو اخترت الوضع الثاني: ESC/POS
+    const mode = (localStorage.getItem("btWebMode") || "tspl");
+    let bytes;
+    if (mode === "escpos") {
+      const canvas = renderPrintRootToCanvas();
+      const img = canvasToEscPosRaster(canvas);
+      bytes = new Uint8Array(2 + img.length + 6);
+      bytes.set([0x1b, 0x40], 0); bytes.set(img, 2); bytes.set([0x1b, 0x64, 0x04, 0x1d, 0x56, 0x01], 2 + img.length);
+    } else {
+      const canvas = await capturePrintRootCanvas();
+      bytes = canvasToTsplBytes(canvas);
+    }
+    await btWriteFast(ch, bytes);
+    btPrintStatus("✅ انبعتت للطابعة (" + (_btDevice && _btDevice.name || "?") + " · " + String(ch.uuid).slice(0, 8) + " · " + (mode === "escpos" ? "الوضع الثاني" : "الوضع الأول") + " · " + Math.round(bytes.length / 1024) + "KB). إذا ما طبعت، اكبس «جرّب الوضع الثاني».");
   } catch (e) {
-    btPrintStatus("❌ فشلت الطباعة: " + (e.message || e));
+    _btDevice = null; _btChar = null;
+    const m = String((e && e.message) || e);
+    btPrintStatus(/cancel/i.test(m) ? "ما اخترت طابعة." : "❌ فشلت الطباعة: " + m + " — تأكد البلوتوث والموقع (GPS) شغّالين والطابعة مش موصولة بجوال ثاني.");
   } finally {
     if (btn) btn.disabled = false;
+  }
+}
+// تجربة كل القنوات: بيطبع ورقة صغيرة على كل قناة، فيها رمز (T1, E1, T2...) — اللي بيطلع بنعتمده
+var _btTestChars = [];
+async function btTestChannels(btn) {
+  if (!navigator.bluetooth) { btPrintStatus("❌ افتح اللينك من Chrome."); return; }
+  try {
+    if (btn) btn.disabled = true;
+    btPrintStatus("اختار الطابعة من القائمة…");
+    const device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: BT_PRINT_CANDIDATE_UUIDS });
+    btPrintStatus("جاري الاتصال…");
+    const server = await device.gatt.connect();
+    const services = await server.getPrimaryServices();
+    _btTestChars = [];
+    for (const svc of services) { let cs = []; try { cs = await svc.getCharacteristics(); } catch (e) { continue; } for (const c of cs) if (c.properties.write || c.properties.writeWithoutResponse) _btTestChars.push(c); }
+    if (!_btTestChars.length) { btPrintStatus("❌ ما في ولا قناة كتابة بهالطابعة."); return; }
+    const enc = (t) => { const a = new Uint8Array(t.length); for (let i = 0; i < t.length; i++) a[i] = t.charCodeAt(i) & 0xff; return a; };
+    for (let i = 0; i < _btTestChars.length; i++) {
+      const c = _btTestChars[i];
+      btPrintStatus("جاري التجربة على القناة " + (i + 1) + " من " + _btTestChars.length + "…");
+      const tspl = enc(`SIZE 70 mm,15 mm\r\nGAP 0 mm,0 mm\r\nCLS\r\nTEXT 30,20,"3",0,2,2,"T${i + 1}"\r\nPRINT 1,1\r\n`);
+      const esc = enc(`\x1b@\x1d!\x11E${i + 1}\x1d!\x00\n\n\n\n`);
+      for (const data of [tspl, esc]) {
+        try {
+          for (let k = 0; k < data.length; k += 20) {
+            const ch = data.slice(k, k + 20);
+            if (c.properties.write) await c.writeValueWithResponse(ch); else { await c.writeValueWithoutResponse(ch); await new Promise((r) => setTimeout(r, 30)); }
+          }
+        } catch (e) {}
+        await new Promise((r) => setTimeout(r, 700));
+      }
+    }
+    const btns = _btTestChars.map((c, i) => `<button class="btn btn-ghost" style="padding:6px 10px;font-size:12px;" onclick="btPickChannel(${i},'tspl')">T${i + 1}</button><button class="btn btn-ghost" style="padding:6px 10px;font-size:12px;" onclick="btPickChannel(${i},'escpos')">E${i + 1}</button>`).join("");
+    const st = document.getElementById("bt-print-status");
+    if (st) st.innerHTML = `شو الرمز اللي انطبع على الورقة؟ اكبسه:<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:6px;">${btns}</div><div class="row-sub" style="margin-top:6px;">ما طلع ولا إشي؟ يعني الطباعة من المتصفح ما بتزبط مع هالطابعة — بنستعمل التطبيق.</div>`;
+  } catch (e) {
+    btPrintStatus("❌ " + ((e && e.message) || e));
+  } finally { if (btn) btn.disabled = false; }
+}
+function btPickChannel(i, mode) {
+  const c = _btTestChars[i]; if (!c) return;
+  try { localStorage.setItem("btCharUuid", String(c.uuid).toLowerCase()); localStorage.setItem("btWebMode", mode); } catch (e) {}
+  _btDevice = null; _btChar = null;
+  btPrintStatus("✅ انحفظ (القناة " + (i + 1) + "، " + (mode === "tspl" ? "الوضع الأول" : "الوضع الثاني") + "). هلأ اكبس «اطبع مباشرة عبر البلوتوث».");
+}
+function btToggleMode() {
+  const cur = localStorage.getItem("btWebMode") || "tspl";
+  const next = cur === "tspl" ? "escpos" : "tspl";
+  try { localStorage.setItem("btWebMode", next); } catch (e) {}
+  btPrintStatus("الوضع هلأ: " + (next === "tspl" ? "الأول (TSPL)" : "الثاني (ESC/POS)") + " — اكبس اطبع مرة ثانية.");
+}
+// الكتابة للطابعة: مع "استلام" لكل قطعة (الطابعة بتأكد إنها استلمت قبل ما نبعت اللي بعدها)
+// — بدون هيك الطابعات الرخيصة بيمتلي عندها المخزن وبتضيع البيانات بصمت وما بتطبع
+async function btWriteFast(ch, bytes) {
+  const canResp = !!ch.properties.write;
+  let size = canResp ? (parseInt(localStorage.getItem("btChunk")) || 120) : 20;
+  let i = 0, n = 0;
+  const total = bytes.length;
+  while (i < total) {
+    const chunk = bytes.slice(i, i + size);
+    try {
+      if (canResp) await ch.writeValueWithResponse(chunk);
+      else { await ch.writeValueWithoutResponse(chunk); await new Promise((r) => setTimeout(r, 25)); }
+    } catch (e) {
+      if (size > 20) { size = 20; try { localStorage.setItem("btChunk", "20"); } catch (x) {} continue; }
+      throw e;
+    }
+    i += chunk.length; n++;
+    if (n % 10 === 0) btPrintStatus("جاري الطباعة… " + Math.round((i / total) * 100) + "%");
   }
 }
 function printInvoice(p, kind) {
@@ -5800,6 +6138,36 @@ function printPartyStatement(kind, partyId) {
       ${rowsHtml}
     </tbody></table>
     <div style="display:flex;justify-content:space-between;font-weight:700;font-size:14px;border-top:1px dashed #999;padding-top:6px;"><span>الرصيد الحالي${otherParty ? " (الصافي)" : ""}</span><span>${fmt(Math.abs(running))} ${esc(settings.currency)} ${running >= 0 ? "عليه" : "له"}</span></div>`;
+  showPrint(html);
+}
+function todayISO() { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+function cashStmtDefaultFrom() { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-01"; }
+function printCashStatement() {
+  const settings = currentSettings();
+  const fromStr = (document.getElementById("cs-from") || {}).value || state._csFrom || cashStmtDefaultFrom();
+  const toStr = (document.getElementById("cs-to") || {}).value || state._csTo || todayISO();
+  const from = new Date(fromStr + "T00:00:00"), to = new Date(toStr + "T23:59:59");
+  if (from > to) { flash("تاريخ البداية بعد تاريخ النهاية"); return; }
+  const all = cashLedger().slice().sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  const sign = (e) => (e.type === "in" ? e.amount : -e.amount);
+  const opening = all.filter((e) => new Date(e.ts) < from).reduce((a, e) => a + sign(e), 0);
+  const rows = all.filter((e) => { const t = new Date(e.ts); return t >= from && t <= to; });
+  let run = opening, tin = 0, tout = 0;
+  const body = rows.map((e) => {
+    run += sign(e); if (e.type === "in") tin += e.amount; else tout += e.amount;
+    return `<tr style="border-bottom:1px dotted #ccc;page-break-inside:avoid;break-inside:avoid;"><td style="text-align:right;padding:4px 0;white-space:nowrap;">${fmtDate(e.ts)}</td><td style="text-align:right;padding:4px 4px;">${esc(e.desc || "")}</td><td style="text-align:left;color:#1d6b35;">${e.type === "in" ? fmt(e.amount) : ""}</td><td style="text-align:left;color:#a33;">${e.type === "out" ? fmt(e.amount) : ""}</td><td style="text-align:left;font-weight:700;">${fmt(run)}</td></tr>`;
+  }).join("");
+  const html = `${printHead(settings)}
+    <div style="text-align:center;font-weight:700;font-size:13px;margin-bottom:4px;">كشف النقدية</div>
+    <div style="text-align:center;font-size:11px;margin-bottom:10px;">من ${fmtDate(from)} إلى ${fmtDate(to)}</div>
+    <div style="display:flex;justify-content:space-between;font-size:11.5px;font-weight:700;border-bottom:1px solid #999;padding-bottom:4px;margin-bottom:4px;"><span>الرصيد أول المدة</span><span>${fmt(opening)} ${esc(settings.currency)}</span></div>
+    <table style="width:100%;font-size:10.5px;border-collapse:collapse;"><thead><tr style="border-bottom:1px solid #999;"><th style="text-align:right;">التاريخ</th><th style="text-align:right;">البيان</th><th style="text-align:left;">داخل</th><th style="text-align:left;">طالع</th><th style="text-align:left;">الرصيد</th></tr></thead>
+    <tbody>${body || `<tr><td colspan="5" style="color:#888;padding:6px 0;">لا توجد حركات بهالفترة</td></tr>`}</tbody></table>
+    <div style="border-top:1px solid #999;margin-top:6px;padding-top:4px;font-size:11.5px;">
+      <div style="display:flex;justify-content:space-between;"><span>مجموع الداخل</span><span>${fmt(tin)}</span></div>
+      <div style="display:flex;justify-content:space-between;"><span>مجموع الطالع</span><span>${fmt(tout)}</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700;font-size:12.5px;margin-top:3px;"><span>الرصيد آخر المدة</span><span>${fmt(run)} ${esc(settings.currency)}</span></div>
+    </div>`;
   showPrint(html);
 }
 function printChecksStatement() {
@@ -5956,6 +6324,7 @@ function renderModal() {
   else if (m.type === "priceCalc") inner = priceCalcModalHtml(m.cartType, m.productId);
   else if (m.type === "repReport") inner = repReportModalHtml(m.repId);
   else if (m.type === "repCollect") inner = repCollectModalHtml();
+  else if (m.type === "repReturn") inner = repReturnModalHtml();
   else if (m.type === "repStatement") inner = repStatementModalHtml();
   else if (m.type === "repCustomers") inner = repCustomersModalHtml(m.repId);
   else if (m.type === "damage") inner = damageModalHtml(m.productId);
@@ -5965,7 +6334,7 @@ function renderModal() {
   else if (m.type === "invoiceDetail") inner = invoiceDetailHtml(m.txKind, m.txId);
   else if (m.type === "returnItem") inner = returnItemModalHtml(m.txKind, m.txId, m.itemIndex);
   else if (m.type === "scan") return scannerModalHtml();
-  return `<div class="modal-backdrop" onclick="if(event.target===this)closeModal();"><div class="modal-box">${inner}</div></div>`;
+  return `<div class="modal-backdrop" onclick="if(event.target===this && Date.now()-(window._suggestPickTs||0)>900)closeModal();"><div class="modal-box">${inner}</div></div>`;
 }
 function warehouseModalHtml(w) {
   return `<div class="modal-title-row"><h3>${w ? "تعديل مستودع" : "مستودع خارجي جديد"}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
@@ -5975,6 +6344,35 @@ function warehouseModalHtml(w) {
       ${w ? `<button class="btn btn-stamp" onclick="deleteWarehouse('${w.id}')">حذف</button>` : ``}
       <button class="btn btn-green flex1" onclick="saveWarehouseFromForm()">حفظ</button>
     </div>`;
+}
+function printTransferReceipt(warehouseId, mode) {
+  const w = scoped("warehouses").find((x) => x.id === warehouseId);
+  if (!w) return;
+  const settings = currentSettings();
+  const all = scoped("warehouseEntries").filter((e) => e.warehouseId === warehouseId && (e.note === "منقول من المحل" || e.note === "منقول للمحل"));
+  let items, title, sub;
+  if (mode === "last" && state._lastTransfer && state._lastTransfer.warehouseId === warehouseId) {
+    items = all.filter((e) => e.batch === state._lastTransfer.batch);
+    title = state._lastTransfer.isIn ? `سند تسليم بضاعة — ${esc(w.name)}` : `سند إرجاع بضاعة للمحل — ${esc(w.name)}`;
+    sub = items.length ? fmtDateTime(items[0].ts) : "";
+  } else {
+    const today = new Date().toDateString();
+    items = all.filter((e) => new Date(e.ts).toDateString() === today);
+    title = `البضاعة المسلّمة اليوم — ${esc(w.name)}`;
+    sub = fmtDate(new Date());
+  }
+  const sum = (type) => { const m = {}; items.filter((e) => e.type === type).forEach((e) => { m[e.productName] = (m[e.productName] || 0) + e.qty; }); return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0], "ar")); };
+  const outRows = sum("in"), backRows = sum("out");
+  const table = (rows) => `<table style="width:100%;font-size:12px;border-collapse:collapse;"><thead><tr style="border-bottom:1.5px solid #333;font-weight:700;"><th style="text-align:right;padding:5px 4px;">#</th><th style="text-align:right;padding:5px 4px;">الصنف</th><th style="text-align:center;padding:5px 4px;">الكمية</th></tr></thead><tbody>${rows.map(([n, q], i) => `<tr style="border-bottom:1px dotted #ccc;page-break-inside:avoid;break-inside:avoid;"><td style="padding:5px 4px;">${i + 1}</td><td style="text-align:right;padding:5px 4px;">${esc(n)}</td><td style="text-align:center;padding:5px 4px;font-weight:700;">${fmt(q)}</td></tr>`).join("")}</tbody></table>
+    <div style="display:flex;justify-content:space-between;font-weight:700;font-size:12px;border-top:1px solid #999;margin-top:4px;padding-top:4px;"><span>عدد الأصناف: ${rows.length}</span><span>مجموع الكميات: ${fmt(rows.reduce((a, r) => a + r[1], 0))}</span></div>`;
+  const html = `${printHead(settings)}
+    <div style="text-align:center;font-weight:700;font-size:14px;margin-bottom:2px;">${title}</div>
+    <div style="text-align:center;font-size:11px;color:#666;margin-bottom:12px;">${sub}</div>
+    ${outRows.length === 0 && backRows.length === 0 ? `<div style="text-align:center;font-size:12px;color:#888;">ما في بضاعة طلعت اليوم</div>` : ""}
+    ${outRows.length ? (mode === "last" ? "" : `<div style="font-weight:700;font-size:12px;margin-bottom:4px;">طلع له من المحل</div>`) + table(outRows) : ""}
+    ${backRows.length ? `<div style="font-weight:700;font-size:12px;margin:12px 0 4px;">رجّع للمحل</div>` + table(backRows) : ""}
+    <div style="margin-top:28px;font-size:11.5px;display:flex;justify-content:space-between;"><span>المستلم: _______________</span><span>التوقيع: _______________</span></div>`;
+  showPrint(html);
 }
 function printWarehouseStock(id) {
   const w = scoped("warehouses").find((x) => x.id === id);
@@ -6031,10 +6429,6 @@ function warehouseDetailHtml(id) {
     </div></div>
     ${w.notes ? `<div class="row-sub" style="margin-bottom:10px;">${esc(w.notes)}</div>` : ``}
 
-    <div class="section-title" style="margin-top:0;">الرصيد الحالي لكل صنف</div>
-    ${Object.keys(byProduct).length === 0 ? emptyState("لا توجد أصناف بعد", true) : `<div class="card" style="margin-bottom:14px;">` +
-      Object.entries(byProduct).map(([name, v]) => `<div class="list-row"><span class="flex1 truncate">${esc(name)}</span><span class="mono" style="font-weight:700;">${fmt(v.in - v.out)} ${esc(v.unit)}</span></div>`).join("") + `</div>`}
-
     <div class="card" style="padding:12px;margin-bottom:14px;">
       <div class="row-title" style="margin-bottom:8px;">إضافة سند</div>
       <div class="row-flex" style="margin-bottom:8px;flex-wrap:wrap;gap:6px;">
@@ -6047,18 +6441,30 @@ function warehouseDetailHtml(id) {
         const mainProducts = scoped("products");
         const isIn = state._whEntryType === "transfer_in";
         const cart = state._transferCart || [];
-        return `<div class="row-sub" style="margin-bottom:8px;background:var(--goldLight);padding:8px 10px;border-radius:8px;color:#5B4B1F;">${isIn ? "هينقص من مخزون المحل، ويزيد في هذا المستودع تلقائي" : "هيزيد في مخزون المحل، وينقص من هذا المستودع تلقائي"}</div>
+        const lt = state._lastTransfer && state._lastTransfer.warehouseId === id ? state._lastTransfer : null;
+        return `${lt ? `<div class="card" style="padding:10px 12px;margin-bottom:10px;background:var(--greenLight);border:none;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:8px;">✅ تم النقل — بدك تطبع سند التسليم؟</div>
+          <div class="row-flex" style="gap:8px;">
+            <button class="btn btn-green flex1" style="font-size:12.5px;" onclick="printTransferReceipt('${id}','last')">🖨 هالنقلة بس</button>
+            <button class="btn btn-ghost flex1" style="font-size:12.5px;" onclick="printTransferReceipt('${id}','today')">🖨 كل اللي طلع اليوم</button>
+          </div></div>` : `<button class="btn btn-ghost btn-block" style="margin-bottom:8px;font-size:12.5px;" onclick="printTransferReceipt('${id}','today')">🖨 كشف اللي طلع اليوم</button>`}
+        <div class="row-sub" style="margin-bottom:8px;background:var(--goldLight);padding:8px 10px;border-radius:8px;color:#5B4B1F;">${isIn ? "هينقص من مخزون المحل، ويزيد في هذا المستودع تلقائي" : "هيزيد في مخزون المحل، وينقص من هذا المستودع تلقائي"}</div>
         ${cart.length > 0 ? `<div class="card" style="padding:8px 10px;margin-bottom:10px;">
           ${cart.map((c, i) => `<div class="list-row" style="padding:6px 0;"><span class="flex1 truncate" style="font-size:12.5px;">${esc(c.name)}</span><span class="mono" style="font-weight:700;">${fmt(c.qty)}</span><button class="icon-btn" style="color:var(--stamp);" onclick="removeTransferCartItem(${i})">🗑</button></div>`).join("")}
         </div>` : ``}
-        <div class="grid2" style="margin-bottom:8px;">
-          <select id="we-product-select">
-            ${mainProducts.map((p) => `<option value="${p.id}" ${state._transferScannedProductId === p.id ? "selected" : ""}>${esc(p.name)} (${fmt(p.stock)})</option>`).join("")}
-          </select>
-          <input id="we-qty" type="text" inputmode="decimal" class="mono" placeholder="الكمية" />
-        </div>
-        <button class="btn btn-ghost btn-block" style="margin-bottom:8px;background:var(--greenLight);color:var(--green);" onclick="state._transferScanWarehouseId='${id}';openScanModal('transfer')">📷 صوّر الباركود بدل ما تدوّر عليه</button>
-        <button class="btn btn-ghost btn-block" style="margin-bottom:10px;background:var(--greenLight);color:var(--green);" onclick="addTransferCartItem()">＋ إضافة صنف تاني للنقلة</button>
+        ${(() => {
+          const whBal = (name) => scoped("warehouseEntries").filter((e) => e.warehouseId === id && e.productName === name).reduce((a, e) => a + (e.type === "in" ? e.qty : -e.qty), 0);
+          const sel = mainProducts.find((p) => p.id === state._transferScannedProductId);
+          const avail = sel ? (isIn ? sel.stock : whBal(sel.name)) : 0;
+          return `${suggestFieldHtml("tr-product", mainProducts, state._transferScannedProductId, "🔍 الصنف — اكتب اسمه", "اكتب أول حرفين من اسم الصنف...", "resolveTransferProduct")}
+          <button class="btn btn-ghost btn-block" style="margin-bottom:10px;background:var(--greenLight);color:var(--green);" onclick="state._transferScanWarehouseId='${id}';openScanModal('transfer')">📷 أو صوّر الباركود</button>
+          ${sel ? `<div class="card" style="padding:10px 12px;margin-bottom:8px;background:var(--greenLight);border:none;">
+            <div class="flex-between"><strong style="font-size:13.5px;">${esc(sel.name)}</strong><span class="row-sub">المتوفر ${isIn ? "بالمحل" : "بالمستودع"}: <strong class="mono">${fmt(avail)}</strong></span></div>
+            <div class="row-flex" style="margin-top:8px;gap:8px;">
+              <input id="we-qty" type="text" inputmode="decimal" class="mono flex1" placeholder="الكمية" style="font-size:16px;" onkeydown="if(event.key==='Enter'){event.preventDefault();addTransferCartItem();}" />
+              <button class="btn btn-green" style="padding:10px 16px;" onclick="addTransferCartItem()">＋ إضافة</button>
+            </div></div>` : ``}`;
+        })()}
         <button class="btn btn-gold btn-block" onclick="confirmTransfer('${id}')">${isIn ? `تأكيد نقل ${cart.length > 0 ? "كل الأصناف (" + cart.length + ")" : "للمستودع"}` : `تأكيد نقل ${cart.length > 0 ? "كل الأصناف (" + cart.length + ")" : "للمحل"}`}</button>`;
       })() : `
       ${(() => { SUGGEST["we-product"] = { names: Object.keys(byProduct), onResolve: "resolveWhProduct" }; return ""; })()}<label class="field" style="margin-bottom:4px;"><span class="lbl">اسم الصنف</span>
@@ -6075,6 +6481,10 @@ function warehouseDetailHtml(id) {
       <button class="btn btn-green btn-block" onclick="saveWarehouseEntry('${id}')">${state._whEntryType === "out" ? "تسجيل سند الإخراج" : "تسجيل سند الإدخال"}</button>
       `}
     </div>
+
+    <button class="btn btn-ghost btn-block" style="margin-bottom:10px;justify-content:space-between;display:flex;" onclick="state._whShowBal=!state._whShowBal;render();"><span>📦 الرصيد الحالي لكل صنف (${Object.keys(byProduct).filter((n) => Math.abs(byProduct[n].in - byProduct[n].out) > 1e-9).length})</span><span>${state._whShowBal ? "▲" : "▼"}</span></button>
+    ${state._whShowBal ? (Object.keys(byProduct).length === 0 ? emptyState("لا توجد أصناف بعد", true) : `<div class="card" style="margin-bottom:14px;">` +
+      Object.entries(byProduct).map(([name, v]) => `<div class="list-row"><span class="flex1 truncate">${esc(name)}</span><span class="mono" style="font-weight:700;">${fmt(v.in - v.out)} ${esc(v.unit)}</span></div>`).join("") + `</div>`) : ""}
 
     <div class="section-title">سجل السندات</div>
     ${sorted.length === 0 ? emptyState("لا توجد سندات بعد", true) : sorted.map((e) => `
@@ -6471,7 +6881,7 @@ function labelPrintModalHtml(productId) {
   const qty = state._labelQty || 6;
   return `<div class="modal-title-row"><h3>🏷️ طباعة ملصق باركود</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <div class="row-sub" style="margin-bottom:8px;">${esc(product.name)}</div>
-    ${!product.barcode ? `<div class="row-sub" style="color:var(--gold);margin-bottom:10px;background:var(--goldLight);padding:8px 10px;border-radius:8px;">⚠️ الصنف ده معندوش باركود محفوظ — هنستخدم ${product.sku ? "رمز المنتج (SKU)" : "رقم داخلي"} بدل منه. لو حابب باركود حقيقي، احفظه الأول من شاشة تعديل الصنف.</div>` : ""}
+    ${!product.barcode ? `<div class="row-sub" style="color:var(--gold);margin-bottom:10px;background:var(--goldLight);padding:8px 10px;border-radius:8px;">⚠️ هالصنف ما إله باركود — رح نعمله باركود جديد ونحفظه عليه، فبيضل نفسه كل مرة.</div>` : ""}
     <label class="field"><span class="lbl">عدد الملصقات</span>
       <div class="row-flex">
         <button class="qty-btn" onclick="state._labelQty=Math.max(1,(state._labelQty||6)-1);render();">－</button>
@@ -6489,14 +6899,12 @@ function printBarcodeLabels(productIds, qtyEach) {
   let idx = 0;
   const specs = [];
   products.forEach((p) => {
-    const codeVal = String(p.barcode || p.sku || p.id).replace(/[^A-Za-z0-9\-]/g, "");
+    const codeVal = getOrCreateBarcode(p);
     for (let i = 0; i < qtyEach; i++) {
       const elId = `bc-label-${idx}`;
       specs.push({ elId, value: codeVal });
       labelsHtml += `<div style="display:inline-block;width:31%;margin:1%;text-align:center;border:1px dashed #ccc;padding:6px 2px;vertical-align:top;page-break-inside:avoid;break-inside:avoid;">
-        <div style="font-size:10px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.name)}</div>
-        <svg id="${elId}"></svg>
-        <div style="font-size:10px;">${fmt(p.price)} ${esc(settings.currency)}</div>
+        <svg id="${elId}" style="width:100%;height:46px;"></svg>
       </div>`;
       idx++;
     }
@@ -6505,7 +6913,8 @@ function printBarcodeLabels(productIds, qtyEach) {
   setTimeout(() => {
     specs.forEach((s) => {
       try {
-        window.JsBarcode("#" + s.elId, s.value, { format: "CODE128", width: 1.4, height: 34, fontSize: 10, margin: 2 });
+        window.JsBarcode("#" + s.elId, s.value, { format: barcodeFormatFor(s.value), width: 1.6, height: 44, displayValue: false, margin: 4 });
+        fitBarcodeSvg(document.getElementById(s.elId));
       } catch (e) { console.error("barcode render failed", s.value, e); }
     });
   }, 30);
@@ -6575,7 +6984,7 @@ function scannerModalHtml() {
    فيها بس اللي مسموحله يشوفه. المندوب بيكتب حركاته بـ "صندوق وارد" (repInbox)، وتطبيق صاحب الشركة بياخذها ويضيفها. */
 const REP_TRACK_KEYS = ["sales", "vouchers", "checks", "purchases", "warehouseEntries", "customers", "cashHandovers", "products", "suppliers"];
 const REP_DATA_KEYS = ["products", "customers", "suppliers", "sales", "vouchers", "checks", "purchases", "warehouses", "warehouseEntries"];
-let repApplying = false;
+var repApplying = false;
 function repEmailOf(u) { return String((u && u.email) || "").trim().toLowerCase(); }
 function repMeta() { return loadKey("repMeta", null); }
 function repOutbox() { return loadKey("repOutbox", []) || []; }
@@ -6603,7 +7012,7 @@ function repRecordDiff(key, next) {
   repSetOutbox(o);
   setTimeout(repFlush, 400);
 }
-let repFlushing = false;
+var repFlushing = false;
 async function repFlush() {
   if (!REP_MODE || repFlushing) return;
   const meta = repMeta(); const db = cloudInit();
@@ -6655,12 +7064,12 @@ function repApplyView(v) {
   state.activeAccountId = acc;
   render();
 }
-let repUnsub = null;
+var repUnsub = null;
 async function repModeStart(u) {
   state.repUser = u;
   const meta = repMeta();
   if (!meta) { state.repStatus = "removed"; render(); return; }
-  if (!u.emailVerified) {
+  if (false && !u.emailVerified) {
     state.repStatus = "verify";
     if (!loadKey("repVerifySent", false)) { try { await u.sendEmailVerification(); saveKey("repVerifySent", true); } catch (e) { console.error(e); } }
     render(); return;
@@ -6703,7 +7112,7 @@ async function repResendVerify() {
 }
 function repModeExit() {
   const unsent = repOutbox().filter((o) => !o.sent).length;
-  if (unsent && !confirm(`في ${unsent} حركة لسه ما انبعتت لصاحب الشركة. إذا طلعت هلأ رح تضيع. متأكد؟`)) return;
+  if (unsent && !confirm(`في ${unsent} حركة لسه ما انبعتت للحساب الرئيسي. إذا طلعت هلأ رح تضيع. متأكد؟`)) return;
   if (!unsent && !confirm("متأكد بدك تسجّل خروج؟")) return;
   try { window.firebase.auth().signOut(); } catch (e) {}
   try {
@@ -6737,16 +7146,16 @@ function renderRepStatusScreen() {
   } else if (st === "removed") {
     body = `<div style="font-size:34px;text-align:center;">🚫</div>
       <h2 style="text-align:center;margin:6px 0;">حسابك كمندوب مش مفعّل</h2>
-      <div class="row-sub" style="text-align:center;margin-bottom:14px;">صاحب الشركة شال إيميلك من المندوبين. تواصل معه.</div>`;
+      <div class="row-sub" style="text-align:center;margin-bottom:14px;">إيميلك انشال من المندوبين. تواصل مع المحل.</div>`;
   } else if (st === "error") {
     body = `<div style="font-size:34px;text-align:center;">📶</div>
       <h2 style="text-align:center;margin:6px 0;">ما قدرنا نوصل للبيانات</h2>
-      <div class="row-sub" style="text-align:center;margin-bottom:14px;">تأكد من الإنترنت. إذا ضلت المشكلة، اطلب من صاحب الشركة يتأكد إنه حدّث قواعد الحماية.</div>
+      <div class="row-sub" style="text-align:center;margin-bottom:14px;">تأكد من الإنترنت. إذا ضلت المشكلة، تواصل مع المحل.</div>
       <button class="btn btn-green btn-block" onclick="location.reload()">إعادة المحاولة</button>`;
   } else {
     body = `<div style="font-size:34px;text-align:center;">⏳</div>
       <h2 style="text-align:center;margin:6px 0;">بانتظار بياناتك</h2>
-      <div class="row-sub" style="text-align:center;margin-bottom:14px;">صاحب الشركة لازم يفتح تطبيق دفتر عنده عشان تنجهز بياناتك (الأصناف والزباين). أول ما تجهز بتطلعلك لحالها.</div>`;
+      <div class="row-sub" style="text-align:center;margin-bottom:14px;">لازم ينفتح تطبيق دفتر على الحساب الرئيسي عشان تنجهز بياناتك (الأصناف والزباين). أول ما تجهز بتطلعلك لحالها.</div>`;
   }
   return `<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--paper);">
     <div class="card" style="max-width:380px;width:100%;padding:24px;">${body}
@@ -6755,11 +7164,14 @@ function renderRepStatusScreen() {
 }
 function repSyncBadgeHtml() {
   const out = repOutbox();
-  const unsent = out.filter((o) => !o.sent).length;
-  const waiting = out.filter((o) => o.sent).length;
+  // نعدّ العمليات اللي بيشوفها المندوب (فاتورة، تحصيل، تسليم كاش...) مش تفاصيلها (حركة مخزون لكل صنف)
+  const MAIN = { sales: 1, vouchers: 1, purchases: 1, cashHandovers: 1, customers: 1, suppliers: 1 };
+  const cnt = (arr) => arr.length ? Math.max(1, arr.filter((o) => o.t === "add" && MAIN[o.key]).length) : 0;
+  const unsent = cnt(out.filter((o) => !o.sent));
+  const waiting = cnt(out.filter((o) => o.sent));
   if (unsent) return `<div class="card" style="padding:8px 12px;margin-bottom:10px;background:var(--goldLight);font-size:12.5px;">⏳ ${unsent} حركة بانتظار الإنترنت عشان تنبعت <button class="btn btn-ghost" style="padding:2px 8px;font-size:11px;min-height:0;margin-inline-start:6px;" onclick="repFlush()">إرسال</button></div>`;
-  if (waiting) return `<div class="card" style="padding:8px 12px;margin-bottom:10px;background:var(--greenLight);font-size:12.5px;">📤 ${waiting} حركة انبعتت وبانتظار ما يفتح صاحب الشركة التطبيق</div>`;
-  return `<div class="row-sub" style="margin-bottom:10px;color:var(--green);">✅ كل حركاتك واصلة لصاحب الشركة</div>`;
+  if (waiting) return `<div class="card" style="padding:8px 12px;margin-bottom:10px;background:var(--greenLight);font-size:12.5px;">📤 ${waiting} حركة انبعتت وبانتظار الحساب الرئيسي</div>`;
+  return `<div class="row-sub" style="margin-bottom:10px;color:var(--green);">✅ كل حركاتك واصلة للحساب الرئيسي</div>`;
 }
 
 /* ---------- جهاز صاحب الشركة: تجهيز نسخة المندوب واستلام حركاته ---------- */
@@ -6816,11 +7228,25 @@ function buildRepView(rep, mergedOps) {
   };
 }
 function repHash(str) { let h = 0; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0; return h + ":" + str.length; }
-const repPublishedHash = {};
-let repPublishTimer = null;
+var repPublishedHash = {};
+var repPublishTimer = null;
 function scheduleRepPublish(delay) { if (REP_MODE) return; clearTimeout(repPublishTimer); repPublishTimer = setTimeout(publishRepViews, delay == null ? 1500 : delay); }
+function repReconcileHandovers() {
+  if (REP_MODE) return false;
+  const hs = loadKey("cashHandovers", []) || [];
+  const mc = DB.manualCash || [];
+  const used = new Set(); let changed = false;
+  hs.filter((h) => h.status === "confirmed").forEach((h) => {
+    let m = mc.find((x) => x.handoverId === h.id);
+    if (!m) m = mc.find((x) => !x.handoverId && !used.has(x.id) && x.type === "in" && Math.abs((Number(x.amount) || 0) - h.amount) < 1e-9 && String(x.desc || "") === "تسليم كاش من المندوب: " + (h.repName || ""));
+    if (m) used.add(m.id); else { h.status = "rejected"; h.removedFromCash = true; changed = true; }
+  });
+  if (changed) saveKey("cashHandovers", hs);
+  return changed;
+}
 async function publishRepViews() {
   if (REP_MODE || cloudRescueHold) return;
+  try { repReconcileHandovers(); } catch (e) {}
   const db = cloudInit(); const linkId = cloudGetLinkId();
   let u = null; try { u = window.firebase.auth().currentUser; } catch (e) {}
   if (!db || !linkId || !u || !navigator.onLine) return;
@@ -6845,20 +7271,19 @@ async function publishRepViews() {
     }
   }
 }
-let repInboxUnsub = null;
+var repInboxUnsub = null; var repInboxRetry = null;
 function repStartInbox() {
   if (REP_MODE) return;
   const db = cloudInit(); const linkId = cloudGetLinkId();
   if (!db || !linkId) return;
-  if (!(loadKey("reps", []) || []).some((r) => r.email)) return;
   if (repInboxUnsub) repInboxUnsub();
   repInboxUnsub = db.collection("daftar_accounts").doc(linkId).collection("repInbox").onSnapshot((snap) => {
     const docs = []; snap.forEach((d) => docs.push(d));
     if (docs.length) repMergeInbox(docs);
-  }, (e) => { console.error("rep inbox listen failed", e); if (e && e.code === "permission-denied") { state.repRulesMissing = true; render(); } });
+  }, (e) => { console.error("rep inbox listen failed", e); repInboxUnsub = null; clearTimeout(repInboxRetry); repInboxRetry = setTimeout(() => { try { repStartInbox(); } catch (x) {} }, 20000); });
   scheduleRepPublish(500);
 }
-let repMerging = false;
+var repMerging = false;
 async function repMergeInbox(docs) {
   if (repMerging) return;
   repMerging = true;
