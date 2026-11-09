@@ -1040,7 +1040,7 @@ function loadKey(key, fallback) {
   catch (e) { return fallback; }
 }
 function saveKey(key, value) {
-  if (REP_MODE && !repApplying && REP_TRACK_KEYS.includes(key)) { try { repRecordDiff(key, value); } catch (e) { console.error("rep diff failed", e); } }
+  if (REP_MODE && !repApplying && REP_TRACK_KEYS && REP_TRACK_KEYS.includes(key)) { try { repRecordDiff(key, value); } catch (e) { console.error("rep diff failed", e); } }
   if (!REP_MODE && Array.isArray(value) && SYNC_KEYS_SET.has(key)) { try { syncStampRecords(key, value); } catch (e) { console.error("sync stamp failed", e); } }
   if (!REP_MODE && key === "reps" && Array.isArray(value)) {
     try {
@@ -2246,7 +2246,7 @@ function cashLedger() {
     });
   }
   if (settings.autoPurchases) {
-    scoped("purchases").forEach((p) => { if (p.paidNow > 0) entries.push({ id: "p" + p.id, ts: p.ts, type: "out", amount: p.paidNow, desc: `مشتريات فاتورة ${docNo(p, "purchases")}`, source: "purchase" }); });
+    scoped("purchases").forEach((p) => { if (p.paidNow > 0 && !isRepCashBuy(p)) entries.push({ id: "p" + p.id, ts: p.ts, type: "out", amount: p.paidNow, desc: `مشتريات فاتورة ${docNo(p, "purchases")}`, source: "purchase" }); });
     scoped("vouchers").filter((v) => v.partyKind === "supplier" && v.method !== "check" && v.method !== "owncheck").forEach((v) => entries.push({ id: "v" + v.id, ts: v.ts, type: "out", amount: v.amount, desc: `دفع: ${v.partyName}`, source: "payment" }));
   }
   // الشيكات الصادرة بتنخصم من الصندوق بس لما تنصرف
@@ -2516,7 +2516,7 @@ function renderRepDashboard() {
   const myHandoversToday = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === rep.id);
   const handedOverToday = myHandoversToday.filter((h) => h.status !== "rejected").reduce((a, h) => a + h.amount, 0);
   const pendingHandover = myHandoversToday.find((h) => h.status === "pending");
-  const cashToday = Math.max(0, cashSalesToday + cashVouchersToday - handedOverToday);
+  const cashToday = Math.max(0, cashSalesToday + cashVouchersToday - repCashPaidOut(rep.id) - handedOverToday);
   const perms = repPermissions(rep);
   return `<div style="min-height:100vh;background:var(--paper);padding-bottom:80px;">
     <div style="background:var(--greenDark);color:#fff;padding:16px;display:flex;justify-content:space-between;align-items:center;">
@@ -2551,7 +2551,7 @@ function renderRepDashboard() {
       <div class="section-title">مبيعاتي الأخيرة</div>
       ${mySales.length === 0 ? emptyState("لا توجد مبيعات بعد", true) : `<div class="card" style="margin-bottom:16px;">` + mySales.slice(0, 15).map((s) => {
         const cust = s.customerId ? (customers.find((c) => c.id === s.customerId) || {}).name : "نقدي";
-        return `<div class="list-row"><button class="icon-btn" style="color:var(--green);" onclick="printSale('${s.id}')">🖨</button><div class="flex1"><div class="truncate" style="font-size:12.5px;">${s.isReturn ? '<span style="color:var(--stamp);">🔄 مرتجع</span> · ' : ""}${esc(cust)} · ${s.items.length} صنف</div><div class="mono row-sub">${fmtDateTime(s.ts)}</div></div><span class="mono" style="font-weight:700;">${fmt(s.total)}</span></div>`;
+        return `<div class="list-row"><button class="icon-btn" style="color:var(--green);" onclick="printSale('${s.id}')">🖨</button>${perms.sale && !s.isReturn && !s.checkPayment ? `<button class="icon-btn" style="color:var(--inkSoft);" onclick="startEditSale('${s.id}')">✎</button>` : ""}<div class="flex1"><div class="truncate" style="font-size:12.5px;">${s.isReturn ? '<span style="color:var(--stamp);">🔄 مرتجع</span> · ' : ""}${s.editedAt ? "✏️ " : ""}${esc(cust)} · ${s.items.length} صنف</div><div class="mono row-sub">${fmtDateTime(s.ts)}</div></div><span class="mono" style="font-weight:700;">${fmt(s.total)}</span></div>`;
       }).join("") + `</div>`}
       <div class="section-title">تحصيلاتي الأخيرة</div>
       ${myVouchers.length === 0 ? emptyState("لا توجد تحصيلات بعد", true) : `<div class="card">` + myVouchers.slice(0, 15).map((v) => `<div class="list-row"><button class="icon-btn" style="color:var(--green);" onclick="repPrintVoucher('${v.id}')">🖨</button><div class="flex1"><div class="truncate" style="font-size:12.5px;">${esc(v.partyName)}${v.method === "check" ? " (شيك)" : ""}</div><div class="mono row-sub">${fmtDateTime(v.ts)}</div></div><span class="mono" style="font-weight:700;color:var(--green);">${fmt(v.amount)}</span></div>`).join("") + `</div>`}
@@ -2775,7 +2775,7 @@ function repHandoverModalHtml() {
   const cashVouchersToday = myVouchers.filter((v) => v.partyKind !== "supplier" && v.method !== "check").reduce((a, v) => a + (v.cashAmount ?? v.amount), 0);
   const myHandoversToday = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === rep.id && h.status !== "rejected");
   const handedOverToday = myHandoversToday.reduce((a, h) => a + h.amount, 0);
-  const cashToday = Math.max(0, cashSalesToday + cashVouchersToday - handedOverToday);
+  const cashToday = Math.max(0, cashSalesToday + cashVouchersToday - repCashPaidOut(rep.id) - handedOverToday);
   return `<div class="modal-title-row"><h3>📤 تسليم الكاش</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <div class="card" style="padding:16px;text-align:center;background:var(--greenLight);margin-bottom:14px;">
       <div class="row-sub">المبلغ اللي معاك دلوقتي</div>
@@ -3269,10 +3269,10 @@ function cartAddItemHtml(kind) {
 }
 function cartPickAdd(id) {
   const before = state.cart.length;
-  addToCart(id);
+  const ok = addToCart(id) !== false;
   const p = scoped("products").find((x) => x.id === id);
   state._cartQ = "";
-  if (p) flash((state.cart.length > before ? "✓ انضاف: " : "✓ زادت الكمية: ") + p.name);
+  if (p && ok) flash((state.cart.length > before ? "✓ انضاف: " : "✓ زادت الكمية: ") + p.name);
   render();
 }
 function cartPickAddP(id) {
@@ -3333,7 +3333,7 @@ function productPickerResultsHtml(products, query, opts) {
     items.forEach((p) => {
       const stk = opts.stockFn ? opts.stockFn(p) : p.stock;
       const out = stk <= 0;
-      html += `<div class="list-row" style="${out && opts.blockOutOfStock ? "opacity:0.5;" : "cursor:pointer;"}" ${out && opts.blockOutOfStock ? "" : `onclick="${opts.addFn}('${p.id}')"`}>
+      html += `<div class="list-row" style="${out && opts.blockOutOfStock ? "opacity:0.5;" : "cursor:pointer;"}" ${out && opts.blockOutOfStock ? `onclick="stockWarn(${esc(JSON.stringify(p.name))}, 0)"` : `onclick="${opts.addFn}('${p.id}')"`}>
         ${p.photo ? `<img src="${photoSrc(p.photo)}" style="width:30px;height:30px;object-fit:cover;border-radius:6px;flex-shrink:0;" />` : `<div style="width:30px;height:30px;border-radius:6px;background:var(--paperLight);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:13px;">📦</div>`}
         <span class="flex1" style="font-size:13px;font-weight:600;line-height:1.35;min-width:0;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${esc(p.name)}</span>
         <span class="chip mono" style="background:${out ? "var(--stampLight)" : "var(--greenLight)"};color:${out ? "var(--stamp)" : "var(--green)"};font-size:10px;flex-shrink:0;">${out ? "نفذت" : stk}</span>
@@ -3387,11 +3387,11 @@ function renderSalesInvoiceListInner() {
     const label = s.isReturn ? "🔄 مرتجع" : s.quick ? "🧾 فاتورة سريعة" : "فاتورة";
     const noSuffix = s.quick && s.invoiceNo ? ` (${esc(s.invoiceNo)})` : "";
     return `<div class="list-row">
-      <div class="flex1"><div class="truncate" style="font-size:12.5px;">${label} <bdi>${docNo(s, "sales")}</bdi>${noSuffix} · ${s.quick ? "بدون أصناف" : s.items.length + " صنف"} ${s.payType === "credit" && !s.isReturn ? "· آجل" : ""}${cust ? " · " + esc(cust) : ""}${s.repId ? ' · <span style="color:#2f5233;font-weight:700;">🚚 ' + esc(repNameOf(s.repId)) + '</span>' : ""}</div><div class="mono row-sub">${fmtDateTime(s.ts)}</div></div>
+      <div class="flex1"><div class="truncate" style="font-size:12.5px;">${label} <bdi>${docNo(s, "sales")}</bdi>${noSuffix} · ${s.quick ? "بدون أصناف" : s.items.length + " صنف"} ${s.payType === "credit" && !s.isReturn ? "· آجل" : ""}${s.editedAt ? " · ✏️ معدّلة" : ""}${cust ? " · " + esc(cust) : ""}${s.repId ? ' · <span style="color:#2f5233;font-weight:700;">🚚 ' + esc(repNameOf(s.repId)) + '</span>' : ""}</div><div class="mono row-sub">${fmtDateTime(s.ts)}</div></div>
       <span class="mono" style="font-weight:700;">${fmt(s.total)}</span>
       <button class="icon-btn" style="color:var(--green);" onclick="printSale('${s.id}')">🖨</button>
-      <button class="icon-btn" style="color:var(--inkSoft);" onclick="startEditSale('${s.id}')">✎</button>
-      <button class="icon-btn" style="color:var(--stamp);" onclick="deleteSale('${s.id}')">🗑</button>
+      ${REP_MODE ? "" : `<button class="icon-btn" style="color:var(--inkSoft);" onclick="startEditSale('${s.id}')">✎</button>
+      <button class="icon-btn" style="color:var(--stamp);" onclick="deleteSale('${s.id}')">🗑</button>`}
     </div>`;
   }).join("") + `</div>`;
 }
@@ -3631,12 +3631,23 @@ function playAddSound() {
     });
   } catch (e) { /* لو المتصفح رفض الصوت لأي سبب، تجاهله بهدوء من غير ما يكسر الإضافة */ }
 }
+function cartAvail(p) {
+  let a = saleAvailStock(p);
+  if (state.editingSaleId) { const old = scoped("sales").find((x) => x.id === state.editingSaleId); if (old) a += (old.items || []).filter((it) => it.productId === p.id).reduce((t, it) => t + (Number(it.qty) || 0), 0); }
+  return a;
+}
+function stockWarn(name, avail) {
+  const msg = avail <= 0 ? `⚠️ «${name}» ما في منه — الكمية خلصت` : `⚠️ «${name}» المتوفر بس ${fmt(avail)} — ما في أكثر`;
+  flash(msg);
+  try { if (navigator.vibrate) navigator.vibrate([120, 60, 120]); } catch (e) {}
+}
 function addToCart(productId) {
   const p = scoped("products").find((x) => x.id === productId);
-  const avail = p ? saleAvailStock(p) : 0;
-  if (!p || avail <= 0) return;
+  if (!p) return;
+  const avail = cartAvail(p);
+  if (avail <= 0) { stockWarn(p.name, 0); render(); return false; }
   const ex = state.cart.find((c) => c.productId === productId);
-  if (ex) { ex.stock = avail; if (ex.qty < avail) ex.qty++; }
+  if (ex) { ex.stock = avail; if (ex.qty < avail) ex.qty++; else { stockWarn(p.name, avail); render(); return false; } }
   else state.cart.push({ productId: p.id, name: p.name, price: p.price, qty: 1, stock: avail });
   playAddSound();
   render();
@@ -3644,13 +3655,16 @@ function addToCart(productId) {
 function changeCartQty(productId, d) {
   const item = state.cart.find((c) => c.productId === productId);
   if (!item) return;
-  item.qty = Math.min(item.stock, Math.max(1, item.qty + d));
+  const want = Math.max(1, item.qty + d);
+  if (want > item.stock + 1e-9) stockWarn(item.name, item.stock);
+  item.qty = Math.min(item.stock, want);
   render();
 }
 function setCartQty(productId, val) {
   const item = state.cart.find((c) => c.productId === productId);
   if (!item) return;
   const n = parseFloat(val) || 1;
+  if (n > item.stock + 1e-9) stockWarn(item.name, item.stock);
   item.qty = Math.min(item.stock, Math.max(0.01, n));
   render();
 }
@@ -3698,15 +3712,17 @@ function completeSale() {
   if (payType !== "cash" && !customerId) { flash("⚠️ اكتب اسم العميل (الفاتورة آجل أو بشيك)"); render(); return; }
   if (isCheck && paidNum <= 0) { flash("⚠️ لازم تحط بيانات الشيك"); return; }
 
-  const sourceWarehouseId = state.editingSaleId ? null : (state.saleForm.sourceWarehouseId || null);
+  const editOld = state.editingSaleId ? scoped("sales").find((s) => s.id === state.editingSaleId) : null;
+  const sourceWarehouseId = editOld ? (editOld.sourceWarehouseId || null) : (state.saleForm.sourceWarehouseId || null);
   const sourceWarehouse = sourceWarehouseId ? scoped("warehouses").find((w) => w.id === sourceWarehouseId) : null;
 
   if (sourceWarehouseId) {
     // تحقق إن كل صنف متوفر بالكمية الكافية في المستودع المختار قبل الإتمام
     for (const c of state.cart) {
       const entries = scoped("warehouseEntries").filter((e) => e.warehouseId === sourceWarehouseId && e.productName === c.name);
-      const available = entries.reduce((a, e) => a + (e.type === "in" ? e.qty : -e.qty), 0);
-      if (c.qty > available) { flash(`ما ينفعش — المتوفر في ${sourceWarehouse ? sourceWarehouse.name : "المستودع"} بس ${fmt(available)} من "${c.name}"`); return; }
+      let available = entries.reduce((a, e) => a + (e.type === "in" ? e.qty : -e.qty), 0);
+      if (editOld) available += editOld.items.filter((it) => it.name === c.name).reduce((a, it) => a + (Number(it.qty) || 0), 0);
+      if (c.qty > available + 1e-9) { flash(`ما ينفعش — المتوفر في ${sourceWarehouse ? sourceWarehouse.name : "المستودع"} بس ${fmt(available)} من "${c.name}"`); return; }
     }
   } else {
     // تحقق إن كل صنف متوفر بالكمية الكافية في مخزون المحل الرئيسي قبل الإتمام
@@ -3726,15 +3742,23 @@ function completeSale() {
   let sale;
   if (state.editingSaleId) {
     const oldSale = scoped("sales").find((s) => s.id === state.editingSaleId);
-    if (!oldSale.sourceWarehouseId) {
+    if (oldSale.sourceWarehouseId) {
+      // فاتورة من سيارة/مستودع: الفرق بينزل أو بيرجع لنفس المستودع
+      const wd = {}; const ts = new Date().toISOString();
+      oldSale.items.forEach((it) => { wd[it.name] = (wd[it.name] || 0) + (Number(it.qty) || 0); });
+      state.cart.forEach((c) => { wd[c.name] = (wd[c.name] || 0) - (Number(c.qty) || 0); });
+      Object.keys(wd).forEach((name) => { const d = wd[name]; if (Math.abs(d) < 1e-9) return;
+        addScoped("warehouseEntries", { id: uid(), warehouseId: oldSale.sourceWarehouseId, ts, type: d > 0 ? "in" : "out", productName: name, qty: Math.abs(d), unit: "", party: "", note: "تعديل فاتورة " + (docNo(oldSale, "sales") || "") }); });
+    } else {
       const delta = {};
       oldSale.items.forEach((it) => { delta[it.productId] = (delta[it.productId] || 0) + it.qty; });
       state.cart.forEach((c) => { delta[c.productId] = (delta[c.productId] || 0) - c.qty; });
       const newProducts = products.map((p) => (delta[p.id] ? { ...p, stock: p.stock + delta[p.id] } : p));
       persistScoped("products", newProducts);
     }
-    sale = { ...oldSale, customerId, items: state.cart.map((c) => ({ productId: c.productId, name: c.name, price: c.price, qty: c.qty })), subtotal, tax, discount, total, paidNow: paidNum, payType: isCheck ? "credit" : payType, checkPayment: isCheck };
+    sale = { ...oldSale, customerId, items: state.cart.map((c) => ({ productId: c.productId, name: c.name, price: c.price, qty: c.qty })), subtotal, tax, discount, total, paidNow: paidNum, payType: isCheck ? "credit" : payType, checkPayment: isCheck, editedAt: new Date().toISOString() };
     persistScoped("sales", scoped("sales").map((s) => (s.id === state.editingSaleId ? sale : s)));
+    if (REP_MODE || state._activeRepId) state._repLastPrint = { kind: "sale", id: sale.id };
     flash("تم تحديث الفاتورة");
   } else {
     if (sourceWarehouseId) {
@@ -3788,7 +3812,7 @@ function completeQuickSale() {
   let sale;
   if (state.editingSaleId) {
     const oldSale = scoped("sales").find((s) => s.id === state.editingSaleId);
-    sale = { ...oldSale, customerId, items: [], quick: true, invoiceNo: state.saleForm.invoiceNo || "", photo: state.saleForm.photo || oldSale.photo || null, total, subtotal: total, tax: 0, discount: 0, paidNow: paidNum, payType: isCheck ? "credit" : payType, checkPayment: isCheck };
+    sale = { ...oldSale, customerId, items: [], quick: true, invoiceNo: state.saleForm.invoiceNo || "", photo: state.saleForm.photo || oldSale.photo || null, total, subtotal: total, tax: 0, discount: 0, paidNow: paidNum, payType: isCheck ? "credit" : payType, checkPayment: isCheck, editedAt: new Date().toISOString() };
     persistScoped("sales", scoped("sales").map((s) => (s.id === state.editingSaleId ? sale : s)));
     flash("تم تحديث الفاتورة");
   } else {
@@ -3823,20 +3847,28 @@ function completeQuickSale() {
 function startEditSale(id) {
   const s = scoped("sales").find((x) => x.id === id);
   if (!s) return;
+  if (REP_MODE) {
+    const r = currentRep();
+    if (!r || s.repId !== r.id) { flash("بتقدر تعدّل فواتيرك بس"); return; }
+    if (s.isReturn || s.checkPayment) { flash("هاي الفاتورة (مرتجع/شيك) بتتعدّل من الإدارة"); return; }
+    state._activeRepId = r.id; state._repLockedWarehouse = true;
+  }
   state.editingSaleId = id;
   if (s.quick) {
     state.saleForm = { customerId: s.customerId || "", payType: s.payType, paidNow: String(s.paidNow), quickMode: true, invoiceNo: s.invoiceNo || "", quickTotal: String(s.total), photo: s.photo || null };
     state.cart = [];
   } else {
-    state.saleForm = { customerId: s.customerId || "", payType: s.payType, paidNow: String(s.paidNow), quickMode: false, invoiceNo: "", quickTotal: "", photo: null };
+    const fullCash = s.payType === "cash" && (Number(s.paidNow) || 0) >= (Number(s.total) || 0) - 0.0001;
+    state.saleForm = { customerId: s.customerId || "", payType: s.payType, paidNow: fullCash ? "" : String(s.paidNow), discount: s.discount ? String(s.discount) : "", quickMode: false, invoiceNo: "", quickTotal: "", photo: null, sourceWarehouseId: s.sourceWarehouseId || null };
     state.cart = s.items.map((it) => {
       const prod = scoped("products").find((p) => p.id === it.productId);
-      return { productId: it.productId, name: it.name, price: it.price, qty: it.qty, stock: (prod ? prod.stock : 0) + it.qty };
+      return { productId: it.productId, name: it.name, price: it.price, qty: it.qty, stock: prod ? cartAvail(prod) : it.qty };
     });
   }
   openSaleCartSheet();
 }
 function deleteSale(id) {
+  if (REP_MODE) { flash("الحذف من الإدارة بس — احكي معهم"); return; }
   const s = scoped("sales").find((x) => x.id === id);
   if (!s) return;
   if (!confirm("متأكد إنك بدك تمسح فاتورة المبيعات هاي؟ ما في رجعة بعد الحذف.")) return;
@@ -4105,7 +4137,7 @@ function completePurchase() {
     } else {
       persistScoped("products", products.map((p) => { const it = state.pcart.find((c) => c.productId === p.id); return it ? { ...p, stock: p.stock + it.qty, cost: weightedAvgCost(p.stock, p.cost, it.qty, it.cost) } : p; }));
     }
-    const purchase = { id: uid(), ts: new Date().toISOString(), supplierId, items: state.pcart.map((c) => ({ productId: c.productId, name: c.name, cost: c.cost, qty: c.qty })), total, paidNow: paidNum, payType, destWarehouseId: destWarehouseId || undefined, repId: state._activeRepId || undefined };
+    const purchase = { id: uid(), ts: new Date().toISOString(), supplierId, items: state.pcart.map((c) => ({ productId: c.productId, name: c.name, cost: c.cost, qty: c.qty })), total, paidNow: paidNum, payType, destWarehouseId: destWarehouseId || undefined, repId: state._activeRepId || undefined, repCash: REP_MODE ? true : undefined };
     addScoped("purchases", purchase);
     flash("تم تسجيل فاتورة الشراء");
   }
@@ -4138,7 +4170,7 @@ function completeQuickPurchase() {
     persistScoped("purchases", scoped("purchases").map((p) => (p.id === state.editingPurchaseId ? updated : p)));
     flash("تم تحديث فاتورة الشراء");
   } else {
-    const purchase = { id: uid(), ts: new Date().toISOString(), supplierId, items: [], quick: true, invoiceNo: state.purchaseForm.invoiceNo || "", photo: state.purchaseForm.photo || null, total, paidNow: paidNum, payType, repId: state._activeRepId || undefined };
+    const purchase = { id: uid(), ts: new Date().toISOString(), supplierId, items: [], quick: true, invoiceNo: state.purchaseForm.invoiceNo || "", photo: state.purchaseForm.photo || null, total, paidNow: paidNum, payType, repId: state._activeRepId || undefined, repCash: REP_MODE ? true : undefined };
     const saved = addScoped("purchases", purchase);
     if (!saved) {
       flash("❌ فشل حفظ الفاتورة! مساحة التخزين ممتلئة — جرب تشيل الصورة أو امسح صور فواتير قديمة");
@@ -4265,7 +4297,7 @@ function handleScanResult(context, code) {
     const products = scoped("products");
     const found = products.find((p) => p.barcode && barcodeMatches(p.barcode, code));
     if (context === "sale") {
-      if (found) { addToCart(found.id); flash("تمت إضافة: " + found.name); }
+      if (found) { if (addToCart(found.id) !== false) flash("تمت إضافة: " + found.name); }
       else { state._cartQ = code; state._cartAddOpen = true; flash("لم يتم العثور على منتج بهذا الباركود"); render(); }
     } else {
       if (found) { addToPCart(found.id); flash("تمت إضافة: " + found.name); }
@@ -4602,6 +4634,7 @@ function sumSelectedEndorseChecks() {
   return scoped("checks").filter((c) => ids.includes(c.id)).reduce((a, c) => a + c.amount, 0);
 }
 function deleteVoucher(id) {
+  if (REP_MODE) { flash("الحذف من الإدارة بس — احكي معهم"); return; }
   if (!confirm("متأكد إنك بدك تمسح السند هاد؟ ما في رجعة بعد الحذف.")) return;
   persistScoped("vouchers", scoped("vouchers").filter((v) => v.id !== id));
   render();
@@ -5544,7 +5577,8 @@ function printRepReport(repId, fromStr, toStr) {
   const totalCollected = vouchers.reduce((a, v) => a + v.amount, 0);
   const dKey = (ts) => { const d = new Date(ts); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
   const cashDays = {};
-  const addDay = (k, f, v) => { if (!cashDays[k]) cashDays[k] = { sales: 0, coll: 0, hand: 0 }; cashDays[k][f] += v; };
+  const addDay = (k, f, v) => { if (!cashDays[k]) cashDays[k] = { sales: 0, coll: 0, buy: 0, hand: 0 }; cashDays[k][f] += v; };
+  scoped("purchases").filter((p) => p.repId === rep.id && new Date(p.ts) >= fromDate && new Date(p.ts) <= toDate && repPurchaseCash(p) > 0).forEach((p) => addDay(dKey(p.ts), "buy", repPurchaseCash(p)));
   sales.filter((s) => s.payType === "cash" && !s.isReturn).forEach((s) => addDay(dKey(s.ts), "sales", Math.min(Number(s.paidNow) || 0, Math.max(0, Number(s.total) || 0))));
   const cashVouchers = vouchers.filter((v) => v.partyKind !== "supplier" && v.method !== "check");
   cashVouchers.forEach((v) => addDay(dKey(v.ts), "coll", Number(v.cashAmount ?? v.amount) || 0));
@@ -5552,11 +5586,12 @@ function printRepReport(repId, fromStr, toStr) {
   hands.forEach((h) => addDay(dKey(h.ts), "hand", Number(h.amount) || 0));
   const cashSalesSum = Object.values(cashDays).reduce((a, d) => a + d.sales, 0);
   const cashCollSum = Object.values(cashDays).reduce((a, d) => a + d.coll, 0);
-  const cashTotal = cashSalesSum + cashCollSum;
+  const cashBuySum = Object.values(cashDays).reduce((a, d) => a + d.buy, 0);
+  const cashTotal = cashSalesSum + cashCollSum - cashBuySum;
   const handTotal = hands.reduce((a, h) => a + (Number(h.amount) || 0), 0);
   let withNow = 0; try { withNow = repCashLedger(rep).withHim; } catch (e) {}
   const td = "padding:3px 2px;border-bottom:1px dotted #ccc;";
-  const dayRows = Object.keys(cashDays).sort().map((k) => { const d = cashDays[k]; const [y, m, dd] = k.split("-"); return `<tr style="page-break-inside:avoid;"><td style="${td}">${Number(dd)}/${Number(m)}</td><td style="${td}text-align:left;">${fmt(d.sales + d.coll)}</td><td style="${td}text-align:left;">${d.hand ? fmt(d.hand) : "—"}</td></tr>`; }).join("");
+  const dayRows = Object.keys(cashDays).sort().map((k) => { const d = cashDays[k]; const [y, m, dd] = k.split("-"); return `<tr style="page-break-inside:avoid;"><td style="${td}">${Number(dd)}/${Number(m)}</td><td style="${td}text-align:left;">${fmt(d.sales + d.coll - d.buy)}</td><td style="${td}text-align:left;">${d.hand ? fmt(d.hand) : "—"}</td></tr>`; }).join("");
   const cashTable = dayRows ? `<table style="width:100%;border-collapse:collapse;font-size:11.5px;">
       <tr style="font-weight:700;"><td style="${td}border-bottom:1px solid #999;">اليوم</td><td style="${td}border-bottom:1px solid #999;text-align:left;">نقد قبضه</td><td style="${td}border-bottom:1px solid #999;text-align:left;">سلّمني</td></tr>
       ${dayRows}
@@ -5583,6 +5618,7 @@ function printRepReport(repId, fromStr, toStr) {
     <div style="border:2px solid #000;border-radius:6px;padding:6px 8px;margin:8px 0;">
       <div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;"><span>نقد من المبيعات</span><span>${fmt(cashSalesSum)}</span></div>
       <div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;"><span>نقد من التحصيلات</span><span>${fmt(cashCollSum)}</span></div>
+      ${cashBuySum > 0 ? `<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;"><span>دفع مشتريات من الكاش</span><span>−${fmt(cashBuySum)}</span></div>` : ""}
       <div style="display:flex;justify-content:space-between;font-size:14px;font-weight:700;padding:4px 0;border-top:1px dashed #999;"><span>💵 مجموع النقد</span><span>${fmt(cashTotal)} ${esc(settings.currency)}</span></div>
       <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;padding:2px 0;"><span>سلّمني بالفترة</span><span>${fmt(handTotal)} ${esc(settings.currency)}</span></div>
       <div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-top:1px dashed #999;"><span>معه هلأ (كل الأيام)</span><strong>${fmt(withNow)} ${esc(settings.currency)}</strong></div>
@@ -7074,30 +7110,66 @@ function printBarcodeLabels(productIds, qtyEach) {
   }, 30);
   closeModal();
 }
+function productMovements(product) {
+  const customers = scoped("customers"), suppliers = scoped("suppliers"), whs = scoped("warehouses");
+  const rows = [];
+  scoped("sales").forEach((s) => {
+    const its = (s.items || []).filter((x) => x.productId === product.id); if (!its.length) return;
+    const q = its.reduce((a, x) => a + (Number(x.qty) || 0), 0); if (!q) return;
+    const cust = s.customerId ? (customers.find((c) => c.id === s.customerId) || {}).name || "" : "نقدي";
+    const fromWh = s.sourceWarehouseId ? (whs.find((w) => w.id === s.sourceWarehouseId) || {}).name || "مستودع" : "";
+    if (fromWh) return; // بيع من سيارة/مستودع ما بيأثر على رصيد المحل
+    const label = (q < 0 || s.isReturn ? "مرتجع" : "بيع") + (s.repId ? " (" + repNameOf(s.repId) + ")" : "");
+    rows.push({ ts: s.ts, label, party: cust, inQ: q < 0 ? -q : 0, outQ: q > 0 ? q : 0, price: its[0].price });
+  });
+  scoped("purchases").forEach((p) => {
+    const its = (p.items || []).filter((x) => x.productId === product.id); if (!its.length) return;
+    if (p.destWarehouseId) return;
+    const q = its.reduce((a, x) => a + (Number(x.qty) || 0), 0); if (!q) return;
+    const sup = (suppliers.find((x) => x.id === p.supplierId) || {}).name || "";
+    rows.push({ ts: p.ts, label: q < 0 ? "مرتجع شراء" : "شراء", party: sup, inQ: q > 0 ? q : 0, outQ: q < 0 ? -q : 0, price: its[0].cost });
+  });
+  scoped("warehouseEntries").forEach((e) => {
+    if (e.productName !== product.name) return;
+    const w = (whs.find((x) => x.id === e.warehouseId) || {}).name || "مستودع";
+    if (e.note === "منقول من المحل") rows.push({ ts: e.ts, label: "نقل إلى", party: w, inQ: 0, outQ: Number(e.qty) || 0, price: null });
+    else if (e.note === "منقول للمحل") rows.push({ ts: e.ts, label: "رجع من", party: w, inQ: Number(e.qty) || 0, outQ: 0, price: null });
+  });
+  scoped("damagedGoods").forEach((d) => { if (d.productId === product.id) rows.push({ ts: d.ts, label: "تالف", party: d.reason || "", inQ: 0, outQ: Number(d.qty) || 0, price: null }); });
+  rows.sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  const net = rows.reduce((a, r) => a + r.inQ - r.outQ, 0);
+  const opening = (Number(product.stock) || 0) - net;
+  let bal = opening; rows.forEach((r) => { bal += r.inQ - r.outQ; r.bal = bal; });
+  return { rows, opening };
+}
 function printProductStatement(productId) {
   const settings = currentSettings();
   const product = scoped("products").find((p) => p.id === productId);
   if (!product) return;
-  const history = productHistory(productId);
-  const totalIn = history.filter((h) => h.type === "purchase").reduce((a, h) => a + h.qty, 0);
-  const totalOut = history.filter((h) => h.type === "sale").reduce((a, h) => a + h.qty, 0);
-  const rows = [...history].reverse().map((h) => `<tr style="border-bottom:1px dotted #ccc;">
-    <td style="text-align:right;padding:3px 0;">${fmtDate(h.ts)}</td>
-    <td style="text-align:right;">${h.type === "sale" ? "بيع" : "شراء"}</td>
-    <td style="text-align:right;">${esc(h.party || "—")}</td>
-    <td style="text-align:center;">${h.type === "sale" ? "-" : "+"}${fmt(h.qty)}</td>
-    <td style="text-align:center;">${fmt(h.price)}</td>
+  const { rows, opening } = productMovements(product);
+  const totalIn = rows.reduce((a, r) => a + r.inQ, 0), totalOut = rows.reduce((a, r) => a + r.outQ, 0);
+  const td = "padding:3px 1px;border-bottom:1px dotted #bbb;vertical-align:top;";
+  const dm = (ts) => { const d = new Date(ts); return d.getDate() + "/" + (d.getMonth() + 1); };
+  const body = rows.map((r) => `<tr style="page-break-inside:avoid;">
+    <td style="${td}white-space:nowrap;">${dm(r.ts)}</td>
+    <td style="${td}">${esc(r.label)}${r.party ? `<div style="font-size:9.5px;color:#444;">${esc(r.party)}</div>` : ""}</td>
+    <td style="${td}text-align:center;">${r.inQ ? fmt(r.inQ) : ""}</td>
+    <td style="${td}text-align:center;">${r.outQ ? fmt(r.outQ) : ""}</td>
+    <td style="${td}text-align:center;">${r.price != null ? fmt(r.price) : ""}</td>
+    <td style="${td}text-align:center;font-weight:700;">${fmt(r.bal)}</td>
   </tr>`).join("");
+  const th = "padding:3px 1px;border-bottom:1.5px solid #000;font-weight:700;";
   const html = `${printHead(settings)}
-    <div style="text-align:center;font-weight:700;font-size:13px;margin-bottom:10px;">كشف حركة صنف: ${esc(product.name)}</div>
-    <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:10px;"><span>الرصيد الحالي</span><strong>${fmt(product.stock)}</strong></div>
+    <div style="text-align:center;font-weight:700;font-size:13px;margin-bottom:8px;">كشف حركة صنف: ${esc(product.name)}</div>
     <table style="width:100%;font-size:11px;border-collapse:collapse;">
-      <thead><tr style="border-bottom:1px solid #999;"><th style="text-align:right;">التاريخ</th><th style="text-align:right;">النوع</th><th style="text-align:right;">الجهة</th><th>الكمية</th><th>السعر</th></tr></thead>
-      <tbody>${rows}</tbody>
+      <thead><tr><th style="${th}text-align:right;">التاريخ</th><th style="${th}text-align:right;">البيان</th><th style="${th}">وارد</th><th style="${th}">صادر</th><th style="${th}">السعر</th><th style="${th}">الرصيد</th></tr></thead>
+      <tbody>
+        <tr><td style="${td}"></td><td style="${td}">رصيد سابق</td><td style="${td}"></td><td style="${td}"></td><td style="${td}"></td><td style="${td}text-align:center;font-weight:700;">${fmt(opening)}</td></tr>
+        ${body}
+        <tr style="font-weight:700;"><td style="padding:4px 1px;border-top:1.5px solid #000;"></td><td style="padding:4px 1px;border-top:1.5px solid #000;">المجموع</td><td style="padding:4px 1px;border-top:1.5px solid #000;text-align:center;">${fmt(totalIn)}</td><td style="padding:4px 1px;border-top:1.5px solid #000;text-align:center;">${fmt(totalOut)}</td><td style="padding:4px 1px;border-top:1.5px solid #000;"></td><td style="padding:4px 1px;border-top:1.5px solid #000;text-align:center;">${fmt(product.stock)}</td></tr>
+      </tbody>
     </table>
-    <div style="display:flex;justify-content:space-between;font-size:12px;margin-top:10px;padding-top:8px;border-top:1px dashed #999;">
-      <span>إجمالي الوارد: ${fmt(totalIn)}</span><span>إجمالي الصادر: ${fmt(totalOut)}</span>
-    </div>`;
+    <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;margin-top:8px;padding-top:6px;border-top:1px dashed #999;"><span>الرصيد الحالي</span><span>${fmt(product.stock)}</span></div>`;
   showPrint(html);
 }
 function newItemModalHtml(name, barcode) {
@@ -7136,8 +7208,8 @@ function scannerModalHtml() {
 /* ===================== المندوبين بحسابات حقيقية =====================
    صاحب الشركة بيضيف المندوب بإيميله وصلاحياته. تطبيق صاحب الشركة بيجهّز للمندوب "نسخة خاصة" (repViews)
    فيها بس اللي مسموحله يشوفه. المندوب بيكتب حركاته بـ "صندوق وارد" (repInbox)، وتطبيق صاحب الشركة بياخذها ويضيفها. */
-const REP_TRACK_KEYS = ["sales", "vouchers", "checks", "purchases", "warehouseEntries", "customers", "cashHandovers", "products", "suppliers"];
-const REP_DATA_KEYS = ["products", "customers", "suppliers", "sales", "vouchers", "checks", "purchases", "warehouses", "warehouseEntries"];
+var REP_TRACK_KEYS = ["sales", "vouchers", "checks", "purchases", "warehouseEntries", "customers", "cashHandovers", "products", "suppliers"];
+var REP_DATA_KEYS = ["products", "customers", "suppliers", "sales", "vouchers", "checks", "purchases", "warehouses", "warehouseEntries"];
 var repApplying = false;
 function repEmailOf(u) { return String((u && u.email) || "").trim().toLowerCase(); }
 function repMeta() { return loadKey("repMeta", null); }
@@ -7158,6 +7230,7 @@ function repRecordDiff(key, next) {
     if (!x || !x.id) return;
     const p = prevMap.get(x.id);
     if (!p) ops.push({ id: "op" + uid(), t: "add", key, rec: JSON.parse(JSON.stringify(x)) });
+    else if (key === "sales" && x.editedAt && x.editedAt !== p.editedAt) ops.push({ id: "op" + uid(), t: "upd", key, rec: JSON.parse(JSON.stringify(x)) });
     else if (key === "products" && Number(p.stock) !== Number(x.stock)) ops.push({ id: "op" + uid(), t: "stock", key, pid: x.id, d: Number(x.stock) - Number(p.stock) });
   });
   if (!ops.length) return;
@@ -7203,6 +7276,7 @@ function repApplyView(v) {
       const arr = ((v.data && v.data[k]) || []).map((x) => ({ ...x, accountId: acc }));
       const ids = new Set(arr.map((x) => x.id));
       pending.filter((o) => o.t === "add" && o.key === k && o.rec && !ids.has(o.rec.id)).forEach((o) => arr.unshift({ ...o.rec, accountId: acc }));
+      pending.filter((o) => o.t === "upd" && o.key === k && o.rec).forEach((o) => { const i = arr.findIndex((x) => x.id === o.rec.id); if (i !== -1) arr[i] = { ...arr[i], ...o.rec, accountId: acc }; });
       if (k === "products") pending.filter((o) => o.t === "stock").forEach((o) => { const p = arr.find((x) => x.id === o.pid); if (p) p.stock = (Number(p.stock) || 0) + Number(o.d || 0); });
       saveKey(k, arr);
     });
@@ -7511,6 +7585,17 @@ function repApplyOp(op, rep) {
     persist("products");
     return true;
   }
+  if (op.t === "upd" && key === "sales" && op.rec && op.rec.id) {
+    if (!perms.sale) return false;
+    const i = (DB.sales || []).findIndex((x) => x.id === op.rec.id && x.accountId === acc && x.repId === rep.id);
+    if (i === -1) return false;
+    const old = DB.sales[i]; const r = op.rec;
+    if (old.isReturn || old.checkPayment) return false;
+    DB.sales[i] = { ...old, customerId: r.customerId || null, items: Array.isArray(r.items) ? r.items : old.items, subtotal: Number(r.subtotal) || 0, tax: Number(r.tax) || 0, discount: Number(r.discount) || 0,
+      total: Number(r.total) || 0, paidNow: Number(r.paidNow) || 0, payType: r.payType === "credit" ? "credit" : "cash", invoiceNo: r.invoiceNo != null ? r.invoiceNo : old.invoiceNo, editedAt: r.editedAt || new Date().toISOString() };
+    persist("sales");
+    return true;
+  }
   if (op.t !== "add" || !op.rec || !op.rec.id) return false;
   const allowed = {
     sales: perms.sale, vouchers: perms.collect || perms.purchase, checks: perms.sale || perms.collect,
@@ -7576,11 +7661,17 @@ function repPlaceLabel(rep) {
   const w = scoped("warehouses").find((x) => x.id === rep.warehouseId);
   return "🚚 " + (w ? w.name : "مستودع محذوف");
 }
+// مشتريات دفعها المندوب من الكاش اللي معه (بتنقص من الكاش اللي معه، مش من الصندوق)
+// من 9/11/2026 (بعد ما تسكّرت الحسابات) كل شراء من مندوب بيتحسب من الكاش اللي معه
+function isRepCashBuy(p) { return !!(p && p.repId && (p.repCash || Date.parse(p.ts) >= 1794171600000)); }
+function repPurchaseCash(p) { return isRepCashBuy(p) && p.payType !== "check" ? Math.min(Number(p.paidNow) || 0, Math.max(0, Number(p.total) || 0)) : 0; }
+function repCashPaidOut(repId) { return (DB.purchases || []).filter((p) => p.repId === repId).reduce((a, p) => a + repPurchaseCash(p), 0); }
 function repCashLedger(r) {
   const cashOf = (s) => Math.min(Number(s.paidNow) || 0, Math.max(0, Number(s.total) || 0));
   const items = [];
   (DB.sales || []).filter((s) => s.repId === r.id && !s.isReturn && s.payType === "cash" && cashOf(s) > 0).forEach((s) => items.push({ ts: s.ts, kind: "بيع نقدي", who: (DB.customers.find((c) => c.id === s.customerId) || {}).name || "عميل نقدي", amount: cashOf(s), doc: docNo(s, "sales") }));
   (DB.vouchers || []).filter((v) => v.repId === r.id && v.partyKind === "customer" && v.method !== "check").forEach((v) => items.push({ ts: v.ts, kind: "قبض", who: (DB.customers.find((c) => c.id === v.partyId) || {}).name || "", amount: Number(v.cashAmount ?? v.amount) || 0 }));
+  (DB.purchases || []).filter((p) => p.repId === r.id && repPurchaseCash(p) > 0).forEach((p) => items.push({ ts: p.ts, kind: "شراء نقدي", who: (DB.suppliers.find((x) => x.id === p.supplierId) || {}).name || "", amount: -repPurchaseCash(p), doc: docNo(p, "purchases") }));
   const hands = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === r.id && h.status !== "rejected");
   const inTotal = items.reduce((a, x) => a + x.amount, 0);
   const outTotal = hands.reduce((a, h) => a + h.amount, 0);
@@ -7617,8 +7708,9 @@ function repTodayStats(r) {
   const collCheck = vouchers.filter((v) => v.method === "check").reduce((a, v) => a + v.amount, 0);
   const handed = hands.filter((h) => h.status === "confirmed").reduce((a, h) => a + h.amount, 0);
   const pending = hands.filter((h) => h.status === "pending").reduce((a, h) => a + h.amount, 0);
-  const cashWith = Math.max(0, cashSales + collCash - handed - pending);
-  return { n: sales.filter((s) => !s.isReturn).length, salesTotal, returns, cashSales, credit, collCash, collCheck, handed, pending, cashWith };
+  const buyCash = (DB.purchases || []).filter((p) => p.repId === r.id && isToday(p)).reduce((a, p) => a + repPurchaseCash(p), 0);
+  const cashWith = Math.max(0, cashSales + collCash - buyCash - handed - pending);
+  return { n: sales.filter((s) => !s.isReturn).length, salesTotal, returns, cashSales, credit, collCash, collCheck, buyCash, handed, pending, cashWith };
 }
 function repTodayCardHtml(r) {
   const t = repTodayStats(r);
@@ -7631,6 +7723,7 @@ function repTodayCardHtml(r) {
     ${t.returns ? row("مرتجعات", t.returns) : ""}
     ${row("تحصيل كاش", t.collCash)}
     ${t.collCheck ? row("تحصيل شيكات", t.collCheck) : ""}
+    ${t.buyCash ? row("دفع مشتريات من الكاش", t.buyCash) : ""}
     ${row("سلّمك كاش", t.handed)}
     ${t.pending ? row("تسليم بانتظار تأكيدك", t.pending) : ""}
   </div>
