@@ -274,6 +274,7 @@ const I18N_EN = {
 "مستودع خاص": "Private warehouse",
 "خروج": "Exit",
 "كاش اليوم معي": "Cash with me today",
+"الكاش اللي معي": "Cash I hold",
 "في انتظار تأكيد الحساب الرئيسي": "Waiting for owner confirmation",
 "طلبت تسليم": "Requested handover of",
 "تسليم الكاش للحساب الرئيسي": "Hand cash to the owner",
@@ -1041,6 +1042,13 @@ function loadKey(key, fallback) {
 function saveKey(key, value) {
   if (REP_MODE && !repApplying && REP_TRACK_KEYS.includes(key)) { try { repRecordDiff(key, value); } catch (e) { console.error("rep diff failed", e); } }
   if (!REP_MODE && Array.isArray(value) && SYNC_KEYS_SET.has(key)) { try { syncStampRecords(key, value); } catch (e) { console.error("sync stamp failed", e); } }
+  if (!REP_MODE && key === "reps" && Array.isArray(value)) {
+    try {
+      const prev = JSON.parse(localStorage.getItem(LS_PREFIX + "reps") || "[]") || [];
+      const pm = new Map(prev.map((x) => [x.id, x])); const now = Date.now();
+      value.forEach((x) => { const p0 = pm.get(x.id); const strip = (o) => { const c = { ...o }; delete c._m; return JSON.stringify(c); }; if (!p0 || strip(p0) !== strip(x)) x._m = now; else if (p0._m && !x._m) x._m = p0._m; });
+    } catch (e) {}
+  }
   try {
     localStorage.setItem(LS_PREFIX + key, JSON.stringify(value));
   } catch (e) {
@@ -1287,7 +1295,13 @@ function syncMergeAccount(accountId, cloud, preferLocalOnTie) {
   localStorage.setItem(LS_PREFIX + "settingsMap", JSON.stringify(settingsMap));
   const repsAll = loadKey("reps", []) || [];
   const repMap = new Map(repsAll.filter((r) => r.accountId === accountId).map((r) => [r.id, r]));
-  ((cloud && cloud.reps) || []).forEach((r) => { if (!repMap.has(r.id) || !preferLocalOnTie) repMap.set(r.id, r); });
+  // المندوبين: الأحدث تعديلاً بيربح (_m)، وإذا ما في تاريخ بنرجع للقاعدة القديمة
+  ((cloud && cloud.reps) || []).forEach((r) => {
+    const l = repMap.get(r.id);
+    if (!l) { repMap.set(r.id, r); return; }
+    const lm = Number(l._m) || 0, cm = Number(r._m) || 0;
+    if (cm > lm || (cm === lm && !preferLocalOnTie)) repMap.set(r.id, r);
+  });
   const repTomb = (id) => tombAtGlobal(localTombs, "reps|" + id);
   const repsMine = [...repMap.values()].filter((r) => !repTomb(r.id));
   localStorage.setItem(LS_PREFIX + "reps", JSON.stringify([...repsAll.filter((r) => r.accountId !== accountId), ...repsMine]));
@@ -2414,6 +2428,8 @@ function render() {
   // لازم نحفظه ونرجّعه برضه، وإلا كل حرف بتكتبه بيرجّع النافذة لأولها من غير قصد
   const modalBoxBefore = document.querySelector(".modal-box");
   const modalScrollTop = modalBoxBefore ? modalBoxBefore.scrollTop : null;
+  // القوائم الداخلية اللي إلها سكرول لحالها (أصناف الفاتورة...) — نحفظ مكانها عشان ما ترجع لراس القائمة
+  const innerScrolls = Array.from(document.querySelectorAll(".cart-items")).map((el) => el.scrollTop);
 
   renderFlashOnly();
   const app = document.getElementById("app");
@@ -2441,6 +2457,7 @@ function render() {
     }
   }
   window.scrollTo(0, scrollY);
+  if (innerScrolls.length) document.querySelectorAll(".cart-items").forEach((el, i) => { if (innerScrolls[i] != null) el.scrollTop = innerScrolls[i]; });
   if (modalScrollTop !== null) {
     const modalBoxAfter = document.querySelector(".modal-box");
     if (modalBoxAfter) modalBoxAfter.scrollTop = modalScrollTop;
@@ -2493,9 +2510,10 @@ function renderRepDashboard() {
   const myVouchers = scoped("vouchers").filter((v) => v.repId === rep.id).sort((a, b) => new Date(b.ts) - new Date(a.ts));
   const customers = scoped("customers");
   const todayStr0 = new Date().toDateString();
-  const cashSalesToday = mySales.filter((s) => s.payType === "cash" && new Date(s.ts).toDateString() === todayStr0).reduce((a, s) => a + s.paidNow, 0);
-  const cashVouchersToday = myVouchers.filter((v) => v.method !== "check" && new Date(v.ts).toDateString() === todayStr0).reduce((a, v) => a + (v.cashAmount ?? v.amount), 0);
-  const myHandoversToday = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === rep.id && new Date(h.ts).toDateString() === todayStr0);
+  // الكاش اللي مع المندوب = كل النقدي اللي قبضه (مش بس اليوم) − كل اللي سلّمه
+  const cashSalesToday = mySales.filter((s) => s.payType === "cash" && !s.isReturn).reduce((a, s) => a + Math.min(Number(s.paidNow) || 0, Math.max(0, Number(s.total) || 0)), 0);
+  const cashVouchersToday = myVouchers.filter((v) => v.partyKind !== "supplier" && v.method !== "check").reduce((a, v) => a + (v.cashAmount ?? v.amount), 0);
+  const myHandoversToday = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === rep.id);
   const handedOverToday = myHandoversToday.filter((h) => h.status !== "rejected").reduce((a, h) => a + h.amount, 0);
   const pendingHandover = myHandoversToday.find((h) => h.status === "pending");
   const cashToday = Math.max(0, cashSalesToday + cashVouchersToday - handedOverToday);
@@ -2512,7 +2530,7 @@ function renderRepDashboard() {
         <button class="btn btn-green btn-block" style="margin-top:8px;padding:11px;" onclick="${state._repLastPrint.kind === "sale" ? `printSale('${state._repLastPrint.id}')` : `repPrintVoucher('${state._repLastPrint.id}')`}">🖨 ${state._repLastPrint.kind === "sale" ? "اطبع الفاتورة" : "اطبع سند القبض"}</button>
       </div>` : ""}
       <div class="card" style="padding:12px;text-align:center;background:var(--greenLight);margin-bottom:10px;">
-        <div class="row-sub" style="font-weight:700;">💵 كاش اليوم معي</div>
+        <div class="row-sub" style="font-weight:700;">💵 الكاش اللي معي</div>
         <div class="mono" style="font-weight:700;font-size:20px;color:var(--green);">${fmt(cashToday)} ${esc(settings.currency)}</div>
       </div>
       ${pendingHandover ? `<div class="card" style="padding:10px 12px;text-align:center;background:var(--goldLight);border:1.5px solid var(--gold);margin-bottom:14px;">
@@ -2753,9 +2771,9 @@ function repHandoverModalHtml() {
   const mySales = scoped("sales").filter((s) => s.repId === rep.id);
   const myVouchers = scoped("vouchers").filter((v) => v.repId === rep.id);
   const todayStr0 = new Date().toDateString();
-  const cashSalesToday = mySales.filter((s) => s.payType === "cash" && new Date(s.ts).toDateString() === todayStr0).reduce((a, s) => a + s.paidNow, 0);
-  const cashVouchersToday = myVouchers.filter((v) => v.method !== "check" && new Date(v.ts).toDateString() === todayStr0).reduce((a, v) => a + (v.cashAmount ?? v.amount), 0);
-  const myHandoversToday = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === rep.id && new Date(h.ts).toDateString() === todayStr0 && h.status !== "rejected");
+  const cashSalesToday = mySales.filter((s) => s.payType === "cash" && !s.isReturn).reduce((a, s) => a + Math.min(Number(s.paidNow) || 0, Math.max(0, Number(s.total) || 0)), 0);
+  const cashVouchersToday = myVouchers.filter((v) => v.partyKind !== "supplier" && v.method !== "check").reduce((a, v) => a + (v.cashAmount ?? v.amount), 0);
+  const myHandoversToday = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === rep.id && h.status !== "rejected");
   const handedOverToday = myHandoversToday.reduce((a, h) => a + h.amount, 0);
   const cashToday = Math.max(0, cashSalesToday + cashVouchersToday - handedOverToday);
   return `<div class="modal-title-row"><h3>📤 تسليم الكاش</h3><button class="close-x" onclick="closeModal()">✕</button></div>
@@ -5128,7 +5146,7 @@ function renderReports() {
   const fPurchases = allPurchases.filter((p) => inRange(p.ts));
   const fExpenses = allExpenses.filter((e) => inRange(e.ts));
   const revenue = fSales.reduce((a, s) => a + s.total, 0);
-  const collected = fSales.reduce((a, s) => a + s.paidNow, 0);
+  const collected = fSales.reduce((a, s) => a + Math.min(Number(s.paidNow) || 0, Math.max(0, Number(s.total) || 0)), 0);
   const purchaseTotal = fPurchases.reduce((a, p) => a + p.total, 0);
   const expenseTotal = fExpenses.reduce((a, e) => a + e.amount, 0);
   const costMap = Object.fromEntries(products.map((p) => [p.id, p.cost || 0]));
@@ -5502,7 +5520,7 @@ function printRepReport(repId, fromStr, toStr) {
   const customers = scoped("customers");
   const sales = scoped("sales").filter((s) => s.repId === rep.id && new Date(s.ts) >= fromDate && new Date(s.ts) <= toDate).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   const totalSales = sales.reduce((a, s) => a + s.total, 0);
-  const totalCash = sales.filter((s) => s.payType === "cash").reduce((a, s) => a + s.paidNow, 0);
+  const totalCash = sales.filter((s) => s.payType === "cash").reduce((a, s) => a + Math.min(Number(s.paidNow) || 0, Math.max(0, Number(s.total) || 0)), 0);
   const totalCredit = sales.filter((s) => s.payType === "credit").reduce((a, s) => a + (s.total - s.paidNow), 0);
   const totalProfit = sales.reduce((a, s) => a + s.items.reduce((b, it) => b + (it.price - (costMap[it.productId] || 0)) * it.qty, 0), 0);
   const vouchers = scoped("vouchers").filter((v) => v.repId === rep.id && new Date(v.ts) >= fromDate && new Date(v.ts) <= toDate).sort((a, b) => new Date(a.ts) - new Date(b.ts));
@@ -5719,8 +5737,11 @@ function showPrint(innerHtml) {
     ? `<button class="btn btn-gold btn-block" onclick="printViaNativeBridge(this)">🖨 اطبع على الطابعة الحرارية (بلوتوث)</button>
        <button class="btn btn-ghost btn-block" style="font-size:11px;padding:6px;" onclick="forgetSavedPrinter()">🔄 تغيير الطابعة المحفوظة</button>`
     : `<button class="btn btn-gold btn-block" onclick="printViaBluetooth(this)">🔵 اطبع مباشرة عبر البلوتوث</button>
-       <div style="display:flex;gap:8px;"><button class="btn btn-ghost flex1" style="font-size:11px;padding:6px;" onclick="printViaBluetooth(this, true)">🔄 اختار طابعة ثانية</button><button class="btn btn-ghost flex1" style="font-size:11px;padding:6px;" onclick="btToggleMode()">⚙️ جرّب الوضع الثاني</button></div>
-       <button class="btn btn-ghost btn-block" style="font-size:11.5px;padding:7px;border:1.5px dashed var(--gold);" onclick="btTestChannels(this)">🧪 ما طبعت؟ اكبس هون — بيجرّب كل الطرق</button>`;
+       <details style="font-size:11.5px;color:var(--inkSoft);text-align:center;"><summary style="cursor:pointer;padding:4px;">⚙️ ما طبعت؟ خيارات الطابعة</summary>
+         <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px;">
+           <div style="display:flex;gap:8px;"><button class="btn btn-ghost flex1" style="font-size:11px;padding:6px;" onclick="printViaBluetooth(this, true)">🔄 اختار طابعة ثانية</button><button class="btn btn-ghost flex1" style="font-size:11px;padding:6px;" onclick="btToggleMode()">⚙️ جرّب الوضع الثاني</button></div>
+           <button class="btn btn-ghost btn-block" style="font-size:11px;padding:6px;" onclick="btTestChannels(this)">🧪 جرّب كل الطرق</button>
+         </div></details>`;
   el.innerHTML = `<div class="print-sheet">
     <div class="no-print" style="margin-bottom:12px;display:flex;flex-direction:column;gap:8px;">
       ${nativeBtn}
@@ -7370,6 +7391,28 @@ function repStartInbox() {
   }, (e) => { console.error("rep inbox listen failed", e); repInboxUnsub = null; clearTimeout(repInboxRetry); repInboxRetry = setTimeout(() => { try { repStartInbox(); } catch (x) {} }, 20000); });
   scheduleRepPublish(500);
 }
+async function repPullInboxNow(btn) {
+  const db = cloudInit(); const linkId = cloudGetLinkId();
+  if (!db || !linkId) { flash("❌ مش مربوط بالسحابة — سجّل دخول"); return; }
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = "⏳ جاري الاستلام…"; }
+    const snap = await db.collection("daftar_accounts").doc(linkId).collection("repInbox").get();
+    const docs = []; snap.forEach((d) => docs.push(d));
+    if (!docs.length) { flash("✅ ما في حركات معلّقة — كل شي واصل"); }
+    else {
+      repMerging = false;
+      await repMergeInbox(docs);
+      const left = (await db.collection("daftar_accounts").doc(linkId).collection("repInbox").get()).size;
+      flash(left ? `⚠️ استلمت ${docs.length - left} وضل ${left} — جرّب كمان مرة` : `📥 استلمت ${docs.length} حركة`);
+    }
+    try { repStartInbox(); } catch (e) {}
+  } catch (e) {
+    flash("❌ ما قدرت أستلم: " + ((e && e.code) || (e && e.message) || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "🔄 استلم حركات المناديب الآن"; }
+    render();
+  }
+}
 var repMerging = false;
 async function repMergeInbox(docs) {
   if (repMerging) return;
@@ -7379,13 +7422,20 @@ async function repMergeInbox(docs) {
   const touched = new Set();
   docs.sort((a, b) => ((a.data() || {}).at || 0) - ((b.data() || {}).at || 0));
   for (const d of docs) {
+    // قبل ما ناخذ الحركة: لازم يكون المندوب معروف عندنا، وإلا بنتركها بالسحابة (ما بنمسحها)
+    const pre = d.data() || {};
+    const rep = (loadKey("reps", []) || []).find((r) => r.email === pre.repEmail && r.id === pre.repId);
+    if (!rep) { console.warn("rep op for unknown rep — kept", pre.repEmail); continue; }
     let op = null;
     try {
       op = await db.runTransaction(async (tx) => { const s = await tx.get(d.ref); if (!s.exists) return null; tx.delete(d.ref); return s.data(); });
-    } catch (e) { console.error("rep op take failed", e); continue; }
+    } catch (e) {
+      // الشبكة الضعيفة بتفشّل الـ transaction — منجرّب طريقة أبسط عشان الحركات ما تعلق
+      console.warn("rep op transaction failed, fallback", e && e.code);
+      try { const s2 = await d.ref.get(); if (s2.exists) { op = s2.data(); await d.ref.delete(); } } catch (e2) { console.error("rep op take failed", e2); continue; }
+    }
     if (!op) continue;
-    const rep = (loadKey("reps", []) || []).find((r) => r.email === op.repEmail && r.id === op.repId);
-    if (!rep) continue;
+    if ((merged[op.repEmail] || []).includes(op.id)) continue;
     try { if (repApplyOp(op, rep)) touched.add(rep.accountId); } catch (e) { console.error("rep op apply failed", e); }
     (merged[op.repEmail] = merged[op.repEmail] || []).push(op.id);
     merged[op.repEmail] = merged[op.repEmail].slice(-300);
@@ -7477,6 +7527,33 @@ function repPlaceLabel(rep) {
   const w = scoped("warehouses").find((x) => x.id === rep.warehouseId);
   return "🚚 " + (w ? w.name : "مستودع محذوف");
 }
+function repCashLedger(r) {
+  const cashOf = (s) => Math.min(Number(s.paidNow) || 0, Math.max(0, Number(s.total) || 0));
+  const items = [];
+  (DB.sales || []).filter((s) => s.repId === r.id && !s.isReturn && s.payType === "cash" && cashOf(s) > 0).forEach((s) => items.push({ ts: s.ts, kind: "بيع نقدي", who: (DB.customers.find((c) => c.id === s.customerId) || {}).name || "عميل نقدي", amount: cashOf(s), doc: docNo(s, "sales") }));
+  (DB.vouchers || []).filter((v) => v.repId === r.id && v.partyKind === "customer" && v.method !== "check").forEach((v) => items.push({ ts: v.ts, kind: "قبض", who: (DB.customers.find((c) => c.id === v.partyId) || {}).name || "", amount: Number(v.cashAmount ?? v.amount) || 0 }));
+  const hands = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === r.id && h.status !== "rejected");
+  const inTotal = items.reduce((a, x) => a + x.amount, 0);
+  const outTotal = hands.reduce((a, h) => a + h.amount, 0);
+  const lastHand = hands.filter((h) => h.status === "confirmed").sort((a, b) => new Date(b.ts) - new Date(a.ts))[0];
+  const since = lastHand ? new Date(lastHand.ts) : null;
+  const recent = items.filter((x) => !since || new Date(x.ts) > since).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  return { withHim: Math.max(0, inTotal - outTotal), recent, lastHand, pending: hands.filter((h) => h.status === "pending").reduce((a, h) => a + h.amount, 0) };
+}
+function printRepCash(repId) {
+  const r = (loadKey("reps", []) || []).find((x) => x.id === repId); if (!r) return;
+  const L = repCashLedger(r); const settings = currentSettings();
+  const d = (ts) => { const x = new Date(ts); return x.getDate() + "/" + (x.getMonth() + 1) + " " + String(x.getHours()).padStart(2, "0") + ":" + String(x.getMinutes()).padStart(2, "0"); };
+  const html = `${printHead(settings)}
+    <div style="text-align:center;font-weight:700;font-size:14px;">الكاش اللي مع: ${esc(r.name)}</div>
+    <div style="text-align:center;font-size:11px;color:#666;margin-bottom:10px;">${L.lastHand ? "من آخر تسليم (" + d(L.lastHand.ts) + " — " + fmt(L.lastHand.amount) + ")" : "من أول ما بلّش"}</div>
+    <table style="width:100%;font-size:12px;border-collapse:collapse;">
+      <thead><tr style="border-bottom:1.5px solid #333;"><th style="text-align:right;padding:4px 0;">الوقت</th><th style="text-align:right;">البيان</th><th style="text-align:left;">المبلغ</th></tr></thead>
+      <tbody>${L.recent.map((x) => `<tr style="border-bottom:1px dotted #bbb;"><td style="padding:5px 0;white-space:nowrap;font-size:10.5px;color:#555;">${d(x.ts)}</td><td style="text-align:right;padding:5px 4px;"><b>${x.kind}</b> · ${esc(x.who)}</td><td style="text-align:left;white-space:nowrap;">${fmt(x.amount)}</td></tr>`).join("") || `<tr><td colspan="3" style="padding:8px 0;color:#888;">ما في كاش جديد</td></tr>`}</tbody></table>
+    ${L.pending ? `<div style="display:flex;justify-content:space-between;font-size:12px;margin-top:6px;"><span>تسليم بانتظار تأكيدك</span><span>−${fmt(L.pending)}</span></div>` : ""}
+    <div style="display:flex;justify-content:space-between;font-weight:700;font-size:15px;border:1.5px solid #333;border-radius:6px;padding:7px 10px;margin-top:8px;"><span>معه هلأ</span><span>${fmt(L.withHim)} ${esc(settings.currency)}</span></div>`;
+  showPrint(html);
+}
 function repTodayStats(r) {
   const today = new Date().toDateString();
   const isToday = (x) => new Date(x.ts).toDateString() === today;
@@ -7485,7 +7562,7 @@ function repTodayStats(r) {
   const hands = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === r.id && isToday(h) && h.status !== "rejected");
   const salesTotal = sales.filter((s) => !s.isReturn).reduce((a, s) => a + (Number(s.total) || 0), 0);
   const returns = sales.filter((s) => s.isReturn).reduce((a, s) => a + Math.abs(Number(s.total) || 0), 0);
-  const cashSales = sales.filter((s) => s.payType === "cash").reduce((a, s) => a + (Number(s.paidNow) || 0), 0);
+  const cashSales = sales.filter((s) => s.payType === "cash").reduce((a, s) => a + Math.min(Number(s.paidNow) || 0, Math.max(0, Number(s.total) || 0)), 0);
   const credit = sales.filter((s) => !s.isReturn).reduce((a, s) => a + ((Number(s.total) || 0) - (Number(s.paidNow) || 0)), 0);
   const collCash = vouchers.filter((v) => v.method !== "check").reduce((a, v) => a + (v.cashAmount ?? v.amount), 0);
   const collCheck = vouchers.filter((v) => v.method === "check").reduce((a, v) => a + v.amount, 0);
@@ -7507,8 +7584,11 @@ function repTodayCardHtml(r) {
     ${t.collCheck ? row("تحصيل شيكات", t.collCheck) : ""}
     ${row("سلّمك كاش", t.handed)}
     ${t.pending ? row("تسليم بانتظار تأكيدك", t.pending) : ""}
-    <div class="flex-between" style="border-top:1px dashed var(--line);margin-top:4px;padding-top:4px;"><strong style="font-size:13px;">💵 الكاش اللي معه هلأ</strong><strong class="mono" style="font-size:15px;color:var(--green);">${fmt(t.cashWith)}</strong></div>
-  </div>`;
+  </div>
+  ${(() => { const L = repCashLedger(r); return `<div class="card" style="padding:10px 12px;margin-bottom:8px;border:2px solid var(--green);cursor:pointer;" onclick="printRepCash('${r.id}')">
+    <div class="flex-between"><strong style="font-size:14px;">💵 الكاش اللي معه هلأ</strong><strong class="mono" style="font-size:18px;color:var(--green);">${fmt(L.withHim)}</strong></div>
+    <div class="flex-between row-sub" style="margin-top:3px;"><span>${L.lastHand ? "من آخر تسليم" : "من أول ما بلّش"} · ${L.recent.length} حركة</span><span>📋 التفصيل</span></div>
+  </div>`; })()}`;
 }
 function renderRepsScreen() {
   const settings = currentSettings();
@@ -7516,7 +7596,7 @@ function renderRepsScreen() {
   const myRepIds = new Set(reps.map((r) => r.id));
   const pendingHand = (loadKey("cashHandovers", []) || []).filter((h) => myRepIds.has(h.repId) && h.status === "pending");
   const whs = scoped("warehouses");
-  let html = "";
+  let html = `<button class="btn btn-ghost btn-block" style="margin-bottom:10px;" onclick="repPullInboxNow(this)">🔄 استلم حركات المناديب الآن</button>`;
   if (state.repRulesMissing) {
     html += `<div class="card" style="padding:14px;margin-bottom:14px;border:2px solid var(--stamp);background:var(--stampLight);">
       <div class="row-title" style="color:var(--stamp);margin-bottom:6px;">⚠️ لازم تحدّث قواعد الحماية بـ Firebase</div>
