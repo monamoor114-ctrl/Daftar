@@ -2781,17 +2781,34 @@ function repHandoverModalHtml() {
       <div class="row-sub">المبلغ اللي معاك دلوقتي</div>
       <div class="mono" style="font-weight:700;font-size:26px;color:var(--green);">${fmt(cashToday)} ${esc(settings.currency)}</div>
     </div>
-    <div class="row-sub" style="margin-bottom:14px;">بعد ما تدوس تأكيد، هيوصل طلب للحساب الرئيسي إنك سلّمته ${fmt(cashToday)} دينار كاش — وهو اللي هيأكّد استلامه.</div>
-    <button class="btn btn-green btn-block" onclick="repSubmitHandover(${cashToday})">تأكيد طلب التسليم</button>`;
+    <div class="row-sub" style="margin-bottom:14px;">بتسلّم المبلغ كامل. بعد التأكيد بيوصل طلب للحساب الرئيسي، وهو اللي بيأكّد الاستلام.</div>
+    <button class="btn btn-green btn-block" ${cashToday > 0 ? "" : "disabled"} onclick="repSubmitHandover(${Number(cashToday.toFixed(2))}, ${Number(cashToday.toFixed(2))})">تأكيد تسليم ${fmt(cashToday)}</button>`;
 }
-function repSubmitHandover(amount) {
+function repSubmitHandover(amount, max) {
   const rep = currentRep();
-  if (!rep || amount <= 0) { flash("مفيش كاش تسلمه دلوقتي"); return; }
+  if (!rep || amount <= 0) { flash("اكتب المبلغ اللي رح تسلّمه"); return; }
+  if (max != null && amount > max + 0.001) { flash("❌ المبلغ أكبر من الكاش اللي معك (" + fmt(max) + ")"); return; }
   const handovers = loadKey("cashHandovers", []) || [];
   handovers.push({ id: uid(), repId: rep.id, repName: rep.name, amount, ts: new Date().toISOString(), status: "pending" });
   saveKey("cashHandovers", handovers);
   flash("تم إرسال طلب التسليم — في انتظار تأكيد الحساب الرئيسي");
   closeModal();
+}
+function ownerReceiveFromRep(repId) {
+  const r = (loadKey("reps", []) || []).find((x) => x.id === repId); if (!r) return;
+  const L = repCashLedger(r);
+  const v = prompt(`كم استلمت من ${r.name} بإيدك؟\n(معه حسب التطبيق: ${fmt(L.withHim)})`, String(Number(L.withHim.toFixed(2))));
+  if (v == null) return;
+  const amount = parseFloat(v);
+  if (!(amount > 0)) { flash("اكتب مبلغ صحيح"); return; }
+  if (amount > L.withHim + 0.001 && !confirm(`المبلغ أكبر من اللي معه حسب التطبيق (${fmt(L.withHim)}). متأكد؟`)) return;
+  const hs = loadKey("cashHandovers", []) || [];
+  const h = { id: uid(), repId: r.id, repName: r.name, amount, ts: new Date().toISOString(), status: "confirmed", confirmedAt: new Date().toISOString(), byOwner: true };
+  hs.push(h); saveKey("cashHandovers", hs);
+  addScoped("manualCash", { id: uid(), ts: h.ts, type: "in", amount, desc: `تسليم كاش من المندوب: ${r.name}`, handoverId: h.id });
+  flash(`✅ استلمت ${fmt(amount)} من ${r.name} — ضل معه ${fmt(Math.max(0, L.withHim - amount))}`);
+  scheduleRepPublish(500);
+  render();
 }
 function confirmHandover(handoverId) {
   const handovers = loadKey("cashHandovers", []) || [];
@@ -5525,6 +5542,27 @@ function printRepReport(repId, fromStr, toStr) {
   const totalProfit = sales.reduce((a, s) => a + s.items.reduce((b, it) => b + (it.price - (costMap[it.productId] || 0)) * it.qty, 0), 0);
   const vouchers = scoped("vouchers").filter((v) => v.repId === rep.id && new Date(v.ts) >= fromDate && new Date(v.ts) <= toDate).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   const totalCollected = vouchers.reduce((a, v) => a + v.amount, 0);
+  const dKey = (ts) => { const d = new Date(ts); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
+  const cashDays = {};
+  const addDay = (k, f, v) => { if (!cashDays[k]) cashDays[k] = { sales: 0, coll: 0, hand: 0 }; cashDays[k][f] += v; };
+  sales.filter((s) => s.payType === "cash" && !s.isReturn).forEach((s) => addDay(dKey(s.ts), "sales", Math.min(Number(s.paidNow) || 0, Math.max(0, Number(s.total) || 0))));
+  const cashVouchers = vouchers.filter((v) => v.partyKind !== "supplier" && v.method !== "check");
+  cashVouchers.forEach((v) => addDay(dKey(v.ts), "coll", Number(v.cashAmount ?? v.amount) || 0));
+  const hands = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === rep.id && h.status !== "rejected" && new Date(h.ts) >= fromDate && new Date(h.ts) <= toDate).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  hands.forEach((h) => addDay(dKey(h.ts), "hand", Number(h.amount) || 0));
+  const cashSalesSum = Object.values(cashDays).reduce((a, d) => a + d.sales, 0);
+  const cashCollSum = Object.values(cashDays).reduce((a, d) => a + d.coll, 0);
+  const cashTotal = cashSalesSum + cashCollSum;
+  const handTotal = hands.reduce((a, h) => a + (Number(h.amount) || 0), 0);
+  let withNow = 0; try { withNow = repCashLedger(rep).withHim; } catch (e) {}
+  const td = "padding:3px 2px;border-bottom:1px dotted #ccc;";
+  const dayRows = Object.keys(cashDays).sort().map((k) => { const d = cashDays[k]; const [y, m, dd] = k.split("-"); return `<tr style="page-break-inside:avoid;"><td style="${td}">${Number(dd)}/${Number(m)}</td><td style="${td}text-align:left;">${fmt(d.sales + d.coll)}</td><td style="${td}text-align:left;">${d.hand ? fmt(d.hand) : "—"}</td></tr>`; }).join("");
+  const cashTable = dayRows ? `<table style="width:100%;border-collapse:collapse;font-size:11.5px;">
+      <tr style="font-weight:700;"><td style="${td}border-bottom:1px solid #999;">اليوم</td><td style="${td}border-bottom:1px solid #999;text-align:left;">نقد قبضه</td><td style="${td}border-bottom:1px solid #999;text-align:left;">سلّمني</td></tr>
+      ${dayRows}
+      <tr style="font-weight:700;"><td style="padding:4px 2px;border-top:1px solid #000;">المجموع</td><td style="padding:4px 2px;border-top:1px solid #000;text-align:left;">${fmt(cashTotal)}</td><td style="padding:4px 2px;border-top:1px solid #000;text-align:left;">${fmt(handTotal)}</td></tr>
+    </table>` : `<div style="font-size:11px;color:#888;">لا يوجد نقد في هذه الفترة</div>`;
+  const handRows = hands.map((h) => `<div style="display:flex;justify-content:space-between;font-size:11px;padding:2px 0;page-break-inside:avoid;"><span>${fmtDate(h.ts)} ${new Date(h.ts).toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" })}${h.status === "pending" ? " (بانتظار التأكيد)" : ""}</span><span>${fmt(h.amount)}</span></div>`).join("") || `<div style="font-size:11px;color:#888;">ما سلّم إشي في هذه الفترة</div>`;
   const rows = sales.map((s) => {
     const cust = s.customerId ? (customers.find((c) => c.id === s.customerId) || {}).name : "نقدي";
     const itemsLine = s.items.map((it) => `${esc(it.name)} ${fmt(it.qty)}×${fmt(it.price)}`).join("، ");
@@ -5542,11 +5580,22 @@ function printRepReport(repId, fromStr, toStr) {
     <div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;"><span>محصّل نقدًا (من المبيعات)</span><strong>${fmt(totalCash)} ${esc(settings.currency)}</strong></div>
     <div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;"><span>آجل (ذمم عند العملاء)</span><strong>${fmt(totalCredit)} ${esc(settings.currency)}</strong></div>
     <div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;"><span>إجمالي التحصيلات (سندات قبض)</span><strong>${fmt(totalCollected)} ${esc(settings.currency)}</strong></div>
+    <div style="border:2px solid #000;border-radius:6px;padding:6px 8px;margin:8px 0;">
+      <div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;"><span>نقد من المبيعات</span><span>${fmt(cashSalesSum)}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;"><span>نقد من التحصيلات</span><span>${fmt(cashCollSum)}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:14px;font-weight:700;padding:4px 0;border-top:1px dashed #999;"><span>💵 مجموع النقد</span><span>${fmt(cashTotal)} ${esc(settings.currency)}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;padding:2px 0;"><span>سلّمني بالفترة</span><span>${fmt(handTotal)} ${esc(settings.currency)}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-top:1px dashed #999;"><span>معه هلأ (كل الأيام)</span><strong>${fmt(withNow)} ${esc(settings.currency)}</strong></div>
+    </div>
     <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-top:1px dashed #999;margin-top:4px;"><span>الربح التقديري</span><strong style="color:${totalProfit >= 0 ? "#2F5233" : "#B23A2E"};">${fmt(totalProfit)} ${esc(settings.currency)}</strong></div>
     <div style="font-weight:700;font-size:12px;border-bottom:1px solid #999;padding:10px 0 3px;margin-top:10px;">تفاصيل الفواتير</div>
     ${rows}
     <div style="font-weight:700;font-size:12px;border-bottom:1px solid #999;padding:10px 0 3px;margin-top:10px;">تفاصيل التحصيلات</div>
-    ${voucherRows}`;
+    ${voucherRows}
+    <div style="font-weight:700;font-size:12px;border-bottom:1px solid #999;padding:10px 0 3px;margin-top:10px;">النقد يوم بيوم</div>
+    ${cashTable}
+    <div style="font-weight:700;font-size:12px;border-bottom:1px solid #999;padding:10px 0 3px;margin-top:10px;">التسليمات</div>
+    ${handRows}`;
   showPrint(html);
   closeModal();
 }
@@ -7588,7 +7637,8 @@ function repTodayCardHtml(r) {
   ${(() => { const L = repCashLedger(r); return `<div class="card" style="padding:10px 12px;margin-bottom:8px;border:2px solid var(--green);cursor:pointer;" onclick="printRepCash('${r.id}')">
     <div class="flex-between"><strong style="font-size:14px;">💵 الكاش اللي معه هلأ</strong><strong class="mono" style="font-size:18px;color:var(--green);">${fmt(L.withHim)}</strong></div>
     <div class="flex-between row-sub" style="margin-top:3px;"><span>${L.lastHand ? "من آخر تسليم" : "من أول ما بلّش"} · ${L.recent.length} حركة</span><span>📋 التفصيل</span></div>
-  </div>`; })()}`;
+  </div>
+  <button class="btn btn-green btn-block" style="margin-bottom:8px;" onclick="ownerReceiveFromRep('${r.id}')">💵 استلمت منه كاش</button>`; })()}`;
 }
 function renderRepsScreen() {
   const settings = currentSettings();
