@@ -5200,7 +5200,13 @@ function renderReports() {
   const purchaseTotal = fPurchases.reduce((a, p) => a + p.total, 0);
   const expenseTotal = fExpenses.reduce((a, e) => a + e.amount, 0);
   const costMap = Object.fromEntries(products.map((p) => [p.id, p.cost || 0]));
-  const grossProfit = fSales.reduce((a, s) => a + s.items.reduce((b, it) => b + (it.price - (costMap[it.productId] || 0)) * it.qty, 0), 0);
+  // الربح بينحسب بس على الأصناف اللي إلها تكلفة معروفة — الفاتورة السريعة أو صنف بدون تكلفة ما بينحسب ربحه
+  let grossProfit = 0, noCostRevenue = 0;
+  fSales.forEach((s) => {
+    if (!s.items || !s.items.length) { noCostRevenue += Number(s.total) || 0; return; }
+    s.items.forEach((it) => { const c = costMap[it.productId]; if (c > 0) grossProfit += (it.price - c) * it.qty; else noCostRevenue += (Number(it.price) || 0) * (Number(it.qty) || 0); });
+    grossProfit -= Number(s.discount) || 0;
+  });
   const topMap = {};
   fSales.forEach((s) => s.items.forEach((it) => { if (!topMap[it.name]) topMap[it.name] = { name: it.name, qty: 0, revenue: 0 }; topMap[it.name].qty += it.qty; topMap[it.name].revenue += it.price * it.qty; }));
   const topProducts = Object.values(topMap).sort((a, b) => b.qty - a.qty).slice(0, 5);
@@ -5229,7 +5235,7 @@ function renderReports() {
     <div class="stat-card"><div class="stat-label"><span>المحصّل نقدًا</span></div><div class="stat-value">${fmt(collected)} ${esc(settings.currency)}</div></div>
     <div class="stat-card"><div class="stat-label"><span>عدد الفواتير</span></div><div class="stat-value">${fSales.length}</div></div>
   </div>
-  <div class="stat-row" style="grid-template-columns:1fr;"><div class="stat-card"><div class="stat-label"><span>الربح التقديري</span></div><div class="stat-value">${fmt(grossProfit)} ${esc(settings.currency)}</div></div></div>`;
+  <div class="stat-row" style="grid-template-columns:1fr;"><div class="stat-card"><div class="stat-label"><span>الربح التقديري</span></div><div class="stat-value">${fmt(grossProfit)} ${esc(settings.currency)}</div>${noCostRevenue > 0.005 ? `<div class="row-sub" style="margin-top:4px;">في مبيعات بـ ${fmt(noCostRevenue)} ${esc(settings.currency)} ما انحسب ربحها (فاتورة سريعة بدون أصناف أو صنف بدون تكلفة)</div>` : ""}</div></div>`;
 
   html += `<div class="section-title">المشتريات والمصروفات</div><div class="stat-row" style="grid-template-columns:1fr 1fr;">
     <div class="stat-card"><div class="stat-label"><span>إجمالي المشتريات</span></div><div class="stat-value">${fmt(purchaseTotal)} ${esc(settings.currency)}</div></div>
@@ -5572,7 +5578,7 @@ function printRepReport(repId, fromStr, toStr) {
   const totalSales = sales.reduce((a, s) => a + s.total, 0);
   const totalCash = sales.filter((s) => s.payType === "cash").reduce((a, s) => a + Math.min(Number(s.paidNow) || 0, Math.max(0, Number(s.total) || 0)), 0);
   const totalCredit = sales.filter((s) => s.payType === "credit").reduce((a, s) => a + (s.total - s.paidNow), 0);
-  const totalProfit = sales.reduce((a, s) => a + s.items.reduce((b, it) => b + (it.price - (costMap[it.productId] || 0)) * it.qty, 0), 0);
+  const totalProfit = sales.reduce((a, s) => a + (s.items || []).reduce((b, it) => b + (costMap[it.productId] > 0 ? (it.price - costMap[it.productId]) * it.qty : 0), 0) - (s.items && s.items.length ? Number(s.discount) || 0 : 0), 0);
   const vouchers = scoped("vouchers").filter((v) => v.repId === rep.id && new Date(v.ts) >= fromDate && new Date(v.ts) <= toDate).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   const totalCollected = vouchers.reduce((a, v) => a + v.amount, 0);
   const dKey = (ts) => { const d = new Date(ts); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
