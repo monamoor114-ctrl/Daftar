@@ -1517,7 +1517,7 @@ function cloudApplySnapshot(kind, accountId, data) {
       if (syncEchoPushes.length < 4) { syncEchoPushes.push(now); setTimeout(() => { cloudMarkDirty(accountId || state.activeAccountId, Date.now()); cloudScheduleSync(); }, 0); }
       else console.warn("sync echo push suppressed");
     }
-    render();
+    bgRender();
   } finally {
     cloudApplyingRemote = false;
   }
@@ -2279,6 +2279,27 @@ let state = {
   reportRange: "today",
 };
 
+// تحديثات بتيجي من الخلفية (سحابة/مناديب): إذا المستخدم عم يكتب ما بنعيد رسم الشاشة — بنستنى لحد ما يخلص
+function userTyping() {
+  const a = document.activeElement;
+  if (!a) return false;
+  const tag = (a.tagName || "").toUpperCase();
+  if (tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (tag === "INPUT") return !["button", "submit", "checkbox", "radio", "file"].includes((a.type || "").toLowerCase());
+  return false;
+}
+var bgRenderTimer = null;
+function bgRender() {
+  clearTimeout(bgRenderTimer);
+  if (userTyping()) { state._bgRenderPending = true; bgRenderTimer = setTimeout(bgRender, 4000); return; }
+  state._bgRenderPending = false;
+  render();
+}
+function bgFlash(msg) {
+  state.flashMsg = msg; renderFlashOnly();
+  setTimeout(() => { if (state.flashMsg === msg) { state.flashMsg = null; renderFlashOnly(); } }, 2600);
+}
+document.addEventListener("focusout", () => { if (state._bgRenderPending) { clearTimeout(bgRenderTimer); bgRenderTimer = setTimeout(bgRender, 700); } });
 function flash(msg) {
   state.flashMsg = msg;
   render();
@@ -2544,10 +2565,13 @@ function renderRepDashboard() {
       ${perms.purchase ? `<button class="btn btn-ghost btn-block" style="margin-bottom:8px;" onclick="repOpenPurchase()">🛒 تسجيل شراء</button>` : ""}
       ${perms.sale ? `<button class="btn btn-ghost btn-block" style="margin-bottom:8px;color:var(--stamp);" onclick="repOpenReturn()">↩️ مرتجع من زبون</button>` : ""}
       <button class="btn btn-ghost btn-block" style="margin-bottom:16px;" onclick="repOpenStatement()">📋 كشف حساب عميل</button>
-      <div class="section-title" style="margin-top:0;">${isMain ? "بضاعة المحل" : "البضاعة المتوفرة معي"}</div>
-      <div class="card" style="margin-bottom:16px;">
+      <button class="btn btn-ghost btn-block" style="margin-bottom:${state._repStockOpen ? "8px" : "16px"};display:flex;justify-content:space-between;align-items:center;" onclick="state._repStockOpen=!state._repStockOpen;render();">
+        <span style="font-weight:700;">📦 ${isMain ? "بضاعة المحل" : "البضاعة المتوفرة معي"} <span class="mono" style="color:var(--inkSoft);font-weight:400;">(${stockRows.length} صنف)</span></span>
+        <span style="font-size:16px;">${state._repStockOpen ? "▲" : "▼"}</span>
+      </button>
+      ${state._repStockOpen ? `<div class="card" style="margin-bottom:16px;">
         ${stockRows.length === 0 ? emptyState("لا توجد بضاعة مسجلة", true) : stockRows.map((r) => `<div class="list-row"><span class="flex1 name2">${esc(r.name)}</span><span class="mono" style="font-weight:700;">${fmt(r.qty)}</span></div>`).join("")}
-      </div>
+      </div>` : ""}
       <div class="section-title">مبيعاتي الأخيرة</div>
       ${mySales.length === 0 ? emptyState("لا توجد مبيعات بعد", true) : `<div class="card" style="margin-bottom:16px;">` + mySales.slice(0, 15).map((s) => {
         const cust = s.customerId ? (customers.find((c) => c.id === s.customerId) || {}).name : "نقدي";
@@ -3206,7 +3230,7 @@ function closeModal() {
   // سكّرنا الكاميرا من غير ما نصوّر: نرجع لنفس الشاشة اللي كنا فيها، مع اللي كان مكتوب
   if (state.modal && state.modal.type === "scan" && state.modal.context === "field" && pendingCapture && back && typeof back === "object") {
     const cap = pendingCapture; pendingCapture = null;
-    if (cap.kind === "product" && back.type === "product") back = { ...back, product: { ...(back.product || {}), ...cap.vals, barcode: (back.product || {}).barcode || "" } };
+    if (cap.kind === "product" && back.type === "product") back = { ...back, product: { ...(back.product || {}), ...cap.vals, barcode: cap.extra ? cap.vals.barcode : ((back.product || {}).barcode || "") } };
     else if (cap.kind === "newItem" && back.type === "newItem") back = { ...back, name: cap.vals.name };
   }
   state.modal = back ? (typeof back === "object" ? back : { type: back }) : null;
@@ -3317,7 +3341,7 @@ function productPickerHtml(products, query, opts) {
 function productPickerResultsHtml(products, query, opts) {
   const q = (query || "").toLowerCase();
   const nq = normName(query || "");
-  const filtered = products.filter((p) => normName(p.name).includes(nq) || (p.sku || "").toLowerCase().includes(q) || (p.barcode || "").includes(query || ""));
+  const filtered = products.filter((p) => normName(p.name).includes(nq) || (p.sku || "").toLowerCase().includes(q) || productCodes(p).some((k) => k.includes(query || "")));
   let html = "";
   if (query && filtered.length === 0 && opts.showAddNew) {
     html += `<button class="btn btn-gold btn-block" style="text-align:right;margin-bottom:10px;" onclick="openNewItemModal('${esc(query).replace(/'/g, "\\'")}','','${opts.addFn === "addToCart" ? "sale" : "purchase"}')">+ إضافة "${esc(query)}" كصنف جديد على الفاتورة</button>`;
@@ -4245,9 +4269,39 @@ function scanIntoBarcodeField() {
       id: m.product ? m.product.id : null,
       name: val("pr-name"), sku: val("pr-sku"), category: val("pr-category"),
       price: val("pr-price"), cost: val("pr-cost"), stock: val("pr-stock"), minStock: val("pr-minstock"),
+      barcodes2: (m.product && m.product.barcodes2) || [],
     },
   };
   openScanModal("field");
+}
+function scanIntoExtraBarcode() {
+  scanIntoBarcodeField();
+  pendingCapture.extra = true;
+  pendingCapture.vals.barcode = val("pr-barcode");
+}
+// بنحفظ اللي مكتوب بشاشة الصنف قبل ما نعيد الرسم
+function prSnapshot() {
+  const m = state.modal; if (!m || m.type !== "product" || !document.getElementById("pr-name")) return;
+  m.product = { ...(m.product || {}), name: val("pr-name"), sku: val("pr-sku"), barcode: val("pr-barcode"), category: val("pr-category"), price: val("pr-price"), cost: val("pr-cost"), stock: val("pr-stock"), minStock: val("pr-minstock") };
+}
+function addExtraBarcode(code) {
+  const m = state.modal; if (!m || m.type !== "product") return;
+  code = String(code || "").trim();
+  if (!code) { flash("اكتب الباركود أو صوّره"); return; }
+  prSnapshot();
+  m.product = m.product || {};
+  const pid = m.product.id;
+  const list = (m.product.barcodes2 || []).slice();
+  if (productCodes({ barcode: m.product.barcode, barcodes2: list }).some((k) => barcodeMatches(k, code))) { flash("هاد الباركود مضاف أصلاً لهالصنف"); render(); return; }
+  const other = codeOwner(code, pid);
+  if (other) { flash(`⚠️ الباركود مسجّل على صنف ثاني: "${other.name}"`); render(); return; }
+  list.push(code); m.product.barcodes2 = list;
+  flash("✅ انضاف الباركود — لا تنسى تكبس حفظ"); render();
+}
+function removeExtraBarcode(i) {
+  const m = state.modal; if (!m || m.type !== "product") return;
+  prSnapshot();
+  const list = (m.product.barcodes2 || []).slice(); list.splice(i, 1); m.product.barcodes2 = list; render();
 }
 function scanIntoNewItemBarcode() {
   pendingCapture = {
@@ -4267,8 +4321,14 @@ function handleScanResult(context, code) {
   stopScanner();
   if (context === "field" && pendingCapture) {
     const cap = pendingCapture; pendingCapture = null;
+    if (cap.kind === "product" && cap.extra) {
+      const back = (state.modal && state.modal._returnTo && typeof state.modal._returnTo === "object") ? state.modal._returnTo : {};
+      state.modal = { ...back, type: "product", product: { ...(back.product || {}), ...cap.vals } };
+      addExtraBarcode(code);
+      return;
+    }
     if (cap.kind === "product") {
-      const existing = scoped("products").find((p) => p.barcode && p.barcode === code && p.id !== cap.vals.id);
+      const existing = codeOwner(code, cap.vals.id);
       if (existing) {
         flash(`⚠️ الباركود ده مسجّل أصلاً على صنف اسمه "${existing.name}" — هفتحلك بياناته بدل ما تعمل صنف مكرر`);
         state.modal = { type: "product", product: existing };
@@ -4277,10 +4337,10 @@ function handleScanResult(context, code) {
       }
       state.modal = { type: "product", product: {
         id: cap.vals.id, name: cap.vals.name, sku: cap.vals.sku, barcode: code, category: cap.vals.category,
-        price: cap.vals.price, cost: cap.vals.cost, stock: cap.vals.stock, minStock: cap.vals.minStock,
+        price: cap.vals.price, cost: cap.vals.cost, stock: cap.vals.stock, minStock: cap.vals.minStock, barcodes2: cap.vals.barcodes2 || [],
       } };
     } else {
-      const existing = scoped("products").find((p) => p.barcode && barcodeMatches(p.barcode, code));
+      const existing = scoped("products").find((p) => productMatchesCode(p, code));
       if (existing) {
         flash(`⚠️ الباركود ده مسجّل أصلاً على صنف اسمه "${existing.name}"`);
         state.modal = { type: "product", product: existing };
@@ -4295,7 +4355,7 @@ function handleScanResult(context, code) {
   if (context === "sale" || context === "purchase") {
     state.modal = { type: context === "sale" ? "saleCart" : "purchaseCart" };
     const products = scoped("products");
-    const found = products.find((p) => p.barcode && barcodeMatches(p.barcode, code));
+    const found = products.find((p) => productMatchesCode(p, code));
     if (context === "sale") {
       if (found) { if (addToCart(found.id) !== false) flash("تمت إضافة: " + found.name); }
       else { state._cartQ = code; state._cartAddOpen = true; flash("لم يتم العثور على منتج بهذا الباركود"); render(); }
@@ -4308,7 +4368,7 @@ function handleScanResult(context, code) {
   if (context === "transfer") {
     state.modal = { type: "warehouseDetail", id: state._transferScanWarehouseId };
     const products = scoped("products");
-    const found = products.find((p) => p.barcode && barcodeMatches(p.barcode, code));
+    const found = products.find((p) => productMatchesCode(p, code));
     if (found) { state._transferScannedProductId = found.id; flash("✅ " + found.name + " — اكتب الكمية"); }
     else { flash("لم يتم العثور على منتج بهذا الباركود"); }
     render();
@@ -4317,8 +4377,12 @@ function handleScanResult(context, code) {
   }
   closeModal();
   const products = scoped("products");
-  const found = products.find((p) => p.barcode && barcodeMatches(p.barcode, code));
+  const found = products.find((p) => productMatchesCode(p, code));
 }
+// كل باركودات الصنف: الأساسي + الإضافية (نكهات/ألوان بنفس السعر)
+function productCodes(p) { return [p && p.barcode, ...((p && Array.isArray(p.barcodes2)) ? p.barcodes2 : [])].map((x) => String(x || "").trim()).filter(Boolean); }
+function productMatchesCode(p, code) { return productCodes(p).some((k) => barcodeMatches(k, code)); }
+function codeOwner(code, exceptId) { return scoped("products").find((p) => p.id !== exceptId && productMatchesCode(p, code)); }
 // مطابقة الباركود مع تسامح بسيط (EAN-13 مقابل UPC-A، ورقم التحقق الأخير)
 function barcodeMatches(saved, code) {
   saved = String(saved || "").trim(); code = String(code || "").trim();
@@ -4333,7 +4397,7 @@ function barcodeMatches(saved, code) {
 }
 // بنقبل القراءة بس لما تتأكد: إذا طابقت صنف موجود فوراً، وإلا لازم نفس الرقم ينقرا 3 مرات ورا بعض
 function makeScanAcceptor(onDetect) {
-  const known = scoped("products").map((p) => String(p.barcode || "").trim()).filter(Boolean);
+  const known = scoped("products").flatMap((p) => productCodes(p));
   let last = "", count = 0, done = false;
   return (raw) => {
     if (done) return true;
@@ -5089,7 +5153,7 @@ function getOrCreateBarcode(product) {
   let code = "";
   const ean13 = (d12) => { let sum = 0; for (let i = 0; i < 12; i++) sum += Number(d12[i]) * (i % 2 ? 3 : 1); return d12 + ((10 - (sum % 10)) % 10); };
   do { code = ean13("2" + String(Math.floor(Math.random() * 100000000000)).padStart(11, "0")); }
-  while (scoped("products").some((p) => p.barcode === code));
+  while (scoped("products").some((p) => productCodes(p).includes(code)));
   persistScoped("products", scoped("products").map((p) => (p.id === product.id ? { ...p, barcode: code } : p)));
   return code;
 }
@@ -5147,13 +5211,15 @@ function saveProductFromForm() {
     stock: parseInt(document.getElementById("pr-stock").value) || 0,
     minStock: parseInt(document.getElementById("pr-minstock").value) || 5,
     photo: (photo && photo.startsWith("data:")) ? photoPut(photo) : (photo || null),
+    barcodes2: ((state.modal.product && state.modal.product.barcodes2) || []).filter((c) => c && c !== document.getElementById("pr-barcode").value.trim()),
   };
+  if (!form.barcodes2.length) delete form.barcodes2;
   if (!form.name) return;
   const list = scoped("products");
 
-  if (form.barcode) {
-    const dupBarcode = list.find((p) => p.barcode && p.barcode === form.barcode && p.id !== form.id);
-    if (dupBarcode) { flash(`⚠️ الباركود ده مسجّل أصلاً على صنف اسمه "${dupBarcode.name}" — كل باركود لازم يكون لصنف واحد بس`); return; }
+  for (const code of productCodes(form)) {
+    const dupBarcode = list.find((p) => p.id !== form.id && productMatchesCode(p, code));
+    if (dupBarcode) { flash(`⚠️ الباركود ${code} مسجّل أصلاً على صنف اسمه "${dupBarcode.name}" — كل باركود لازم يكون لصنف واحد بس`); return; }
   }
 
   if (!id) {
@@ -6954,6 +7020,13 @@ function productModalHtml(product) {
     </label>
     ${(state._prPhoto || (product && product.photo)) ? `<div style="position:relative;margin-bottom:10px;width:110px;"><img src="${photoSrc(state._prPhoto || product.photo)}" style="width:110px;height:110px;object-fit:cover;border-radius:8px;" /><button class="icon-btn" style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,.5);color:#fff;border-radius:6px;" onclick="state._prPhoto='';state._prPhotoRemoved=true;render();">🗑</button></div>` : ""}
     <label class="field"><span class="lbl">الباركود</span><div class="row-flex"><input id="pr-barcode" class="mono flex1" value="${esc(product ? product.barcode || "" : "")}" /><button class="btn btn-ghost" style="background:var(--greenLight);color:var(--green);" onclick="scanIntoBarcodeField()">📷</button></div></label>
+    <div style="margin:-4px 0 14px;">
+      <div style="font-size:12px;color:var(--inkSoft);margin-bottom:6px;">باركودات إضافية — نكهات أو ألوان بنفس السعر، كلها بتنحسب على هالصنف</div>
+      ${((product && product.barcodes2) || []).map((c, i) => `<div class="row-flex" style="gap:6px;margin-bottom:4px;"><span class="chip mono flex1" style="background:var(--greenLight);color:var(--green);text-align:right;padding:7px 10px;">${esc(c)}</span><button class="icon-btn" style="color:var(--stamp);" onclick="removeExtraBarcode(${i})">✕</button></div>`).join("")}
+      <div class="row-flex" style="gap:6px;"><input id="pr-extra" class="mono flex1" inputmode="numeric" placeholder="باركود نكهة ثانية" onkeydown="if(event.key==='Enter'){addExtraBarcode(this.value);}" />
+        <button class="btn btn-ghost" style="padding:8px 10px;" onclick="addExtraBarcode(document.getElementById('pr-extra').value)">＋</button>
+        <button class="btn btn-ghost" style="background:var(--greenLight);color:var(--green);" onclick="scanIntoExtraBarcode()">📷</button></div>
+    </div>
     <div class="grid2">
       <label class="field"><span class="lbl">رمز المنتج (SKU)</span><input id="pr-sku" class="mono" value="${esc(product ? product.sku : "")}" /></label>
       <label class="field"><span class="lbl">التصنيف</span><input id="pr-category" value="${esc(product ? product.category : "")}" /></label>
@@ -7194,7 +7267,32 @@ function newItemModalHtml(name, barcode) {
       <label class="field"><span class="lbl">الكمية بهذه الفاتورة</span><input id="ni-qty" type="text" inputmode="decimal" class="mono" value="1" /></label>
       <label class="field"><span class="lbl">حد تنبيه المخزون</span><input id="ni-minstock" type="text" inputmode="decimal" class="mono" value="5" /></label>
     </div>
-    <button class="btn btn-green btn-block" onclick="saveNewItem()">إضافة للفاتورة</button>`;
+    <button class="btn btn-green btn-block" onclick="saveNewItem()">إضافة للفاتورة</button>
+    <div class="card" style="padding:10px 12px;margin-top:12px;background:var(--goldLight);">
+      <div class="row-title" style="font-size:13px;margin-bottom:6px;">🔗 هاد الكود نكهة أو لون لصنف موجود؟</div>
+      <div class="row-sub" style="margin-bottom:6px;">دوّر على الصنف واكبس عليه — الكود بينضاف عليه وبينحط بالفاتورة، بدل صنف جديد.</div>
+      <input id="ni-link" placeholder="اكتب اسم الصنف..." oninput="niLinkSearch(this.value)" />
+      <div id="ni-link-list" style="margin-top:6px;"></div>
+    </div>`;
+}
+function niLinkSearch(q) {
+  const box = document.getElementById("ni-link-list"); if (!box) return;
+  const nq = normName(q || "");
+  if (!nq) { box.innerHTML = ""; return; }
+  const hits = scoped("products").filter((p) => normName(p.name).includes(nq)).slice(0, 8);
+  box.innerHTML = hits.length ? hits.map((p) => `<button class="btn btn-ghost btn-block" style="text-align:right;margin-bottom:4px;padding:8px 10px;font-size:13px;" onclick="linkCodeToProduct('${p.id}')">${esc(p.name)} <span class="mono" style="color:var(--inkSoft);font-size:11px;">· ${fmt(p.price)} · مخزون ${fmt(p.stock)}</span></button>`).join("") : `<div class="row-sub">ما في صنف بهالاسم</div>`;
+}
+function linkCodeToProduct(pid) {
+  const code = ((document.getElementById("ni-barcode") || {}).value || "").trim();
+  if (!code) { flash("ما في باركود — صوّره أو اكتبه فوق"); return; }
+  const p = scoped("products").find((x) => x.id === pid); if (!p) return;
+  const other = codeOwner(code, pid);
+  if (other) { flash(`⚠️ الباركود مسجّل على صنف ثاني: "${other.name}"`); return; }
+  if (!productMatchesCode(p, code)) persistScoped("products", scoped("products").map((x) => (x.id === pid ? { ...x, barcodes2: [...(x.barcodes2 || []), code] } : x)));
+  const kind = (state.modal && state.modal.kind) || "purchase";
+  closeModal();
+  if (kind === "sale") { if (addToCart(pid) !== false) flash("🔗 انربط الكود بـ " + p.name + " وانضاف للفاتورة"); }
+  else { addToPCart(pid); flash("🔗 انربط الكود بـ " + p.name + " وانضاف للفاتورة"); }
 }
 function scannerModalHtml() {
   return `<div class="modal-backdrop" onclick="if(event.target===this){stopScanner();closeModal();}"><div class="modal-box">
@@ -7265,7 +7363,7 @@ async function repFlush() {
   } catch (e) { console.error("rep flush failed", e); }
   repSetOutbox(out);
   repFlushing = false;
-  if (REP_MODE) render();
+  if (REP_MODE) bgRender();
 }
 function repApplyView(v) {
   const meta = repMeta();
@@ -7296,7 +7394,7 @@ function repApplyView(v) {
   } finally { repApplying = false; }
   bootDB();
   state.activeAccountId = acc;
-  render();
+  bgRender();
 }
 var repUnsub = null;
 async function repModeStart(u) {
@@ -7574,8 +7672,8 @@ async function repMergeInbox(docs) {
   if (touched.size) {
     touched.forEach((acc) => cloudMarkDirty(acc, Date.now()));
     if (touched.has(state.activeAccountId)) cloudScheduleSync();
-    flash("📥 وصلت حركات جديدة من المندوب");
-    render();
+    bgFlash("📥 وصلت حركات جديدة من المندوب");
+    bgRender();
   }
   scheduleRepPublish(800);
 }
