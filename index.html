@@ -1467,7 +1467,7 @@ function cloudApplySnapshot(kind, accountId, data) {
   if (!data || cloudRescueHold) return;
   // لو المستخدم لسه بيبني فاتورة (سلة فيها أصناف) أو واقف في نافذة إدخال بيانات، أجّل التحديث عشان ما نقطعش شغله
   const cartBusy = (state.cart && state.cart.length > 0) || (state.pcart && state.pcart.length > 0);
-  const modalBusy = state.modal && ["saleCart", "purchaseCart", "repCollect", "repHandover", "repReturn"].includes(state.modal.type);
+  const modalBusy = state.modal && ["saleCart", "purchaseCart", "repCollect", "repHandover", "repReturn", "repPaySupplier"].includes(state.modal.type);
   if (cartBusy || modalBusy) { pendingCloudSnapshots.push({ kind, accountId, data }); return; }
   cloudApplyingRemote = true;
   try {
@@ -1527,7 +1527,7 @@ let pendingCloudSnapshots = [];
 function applyPendingCloudSnapshotIfSafe() {
   if (pendingCloudSnapshots.length === 0) return;
   const cartBusy = (state.cart && state.cart.length > 0) || (state.pcart && state.pcart.length > 0);
-  const modalBusy = state.modal && ["saleCart", "purchaseCart", "repCollect", "repHandover", "repReturn"].includes(state.modal.type);
+  const modalBusy = state.modal && ["saleCart", "purchaseCart", "repCollect", "repHandover", "repReturn", "repPaySupplier"].includes(state.modal.type);
   if (cartBusy || modalBusy) return;
   const pending = pendingCloudSnapshots;
   pendingCloudSnapshots = [];
@@ -2247,7 +2247,7 @@ function cashLedger() {
   }
   if (settings.autoPurchases) {
     scoped("purchases").forEach((p) => { if (p.paidNow > 0 && !isRepCashBuy(p)) entries.push({ id: "p" + p.id, ts: p.ts, type: "out", amount: p.paidNow, desc: `مشتريات فاتورة ${docNo(p, "purchases")}`, source: "purchase" }); });
-    scoped("vouchers").filter((v) => v.partyKind === "supplier" && v.method !== "check" && v.method !== "owncheck").forEach((v) => entries.push({ id: "v" + v.id, ts: v.ts, type: "out", amount: v.amount, desc: `دفع: ${v.partyName}`, source: "payment" }));
+    scoped("vouchers").filter((v) => v.partyKind === "supplier" && v.method !== "check" && v.method !== "owncheck" && !v.repId).forEach((v) => entries.push({ id: "v" + v.id, ts: v.ts, type: "out", amount: v.amount, desc: `دفع: ${v.partyName}`, source: "payment" }));
   }
   // الشيكات الصادرة بتنخصم من الصندوق بس لما تنصرف
   scoped("issuedChecks").filter((c) => c.status === "cleared").forEach((c) => entries.push({ id: "ic" + c.id, ts: c.clearedAt || c.dueDate || c.ts, type: "out", amount: c.amount, desc: `صرف شيك صادر${c.checkNo ? " رقم " + c.checkNo : ""} لـ ${c.partyName || ""}`, source: "issuedCheck" }));
@@ -2547,8 +2547,8 @@ function renderRepDashboard() {
     <div style="padding:14px;">
       ${REP_MODE ? repSyncBadgeHtml() : ""}
       ${state._repLastPrint ? `<div class="card" style="padding:10px 12px;margin-bottom:10px;background:#fff;border:1.5px solid var(--green);">
-        <div class="flex-between"><strong style="font-size:13px;">✅ ${state._repLastPrint.kind === "sale" ? "انسجلت الفاتورة" : "انسجل سند القبض"}</strong><button class="icon-btn" onclick="state._repLastPrint=null;render();">✕</button></div>
-        <button class="btn btn-green btn-block" style="margin-top:8px;padding:11px;" onclick="${state._repLastPrint.kind === "sale" ? `printSale('${state._repLastPrint.id}')` : `repPrintVoucher('${state._repLastPrint.id}')`}">🖨 ${state._repLastPrint.kind === "sale" ? "اطبع الفاتورة" : "اطبع سند القبض"}</button>
+        <div class="flex-between"><strong style="font-size:13px;">✅ ${state._repLastPrint.kind === "sale" ? "انسجلت الفاتورة" : state._repLastPrint.kind === "supvoucher" ? "انسجل سند الدفع" : "انسجل سند القبض"}</strong><button class="icon-btn" onclick="state._repLastPrint=null;render();">✕</button></div>
+        <button class="btn btn-green btn-block" style="margin-top:8px;padding:11px;" onclick="${state._repLastPrint.kind === "sale" ? `printSale('${state._repLastPrint.id}')` : state._repLastPrint.kind === "supvoucher" ? `repPrintSupVoucher('${state._repLastPrint.id}')` : `repPrintVoucher('${state._repLastPrint.id}')`}">🖨 ${state._repLastPrint.kind === "sale" ? "اطبع الفاتورة" : state._repLastPrint.kind === "supvoucher" ? "اطبع سند الدفع" : "اطبع سند القبض"}</button>
       </div>` : ""}
       <div class="card" style="padding:12px;text-align:center;background:var(--greenLight);margin-bottom:10px;">
         <div class="row-sub" style="font-weight:700;">💵 الكاش اللي معي</div>
@@ -2561,6 +2561,7 @@ function renderRepDashboard() {
       <div class="row-flex" style="gap:8px;margin-bottom:8px;">
         ${perms.sale ? `<button class="btn btn-green flex1" style="padding:14px 6px;font-size:13px;" onclick="repOpenSale()">➕ تسجيل بيع</button>` : ""}
         ${perms.collect ? `<button class="btn btn-gold flex1" style="padding:14px 6px;font-size:13px;" onclick="repOpenCollect()">💰 تسجيل تحصيل</button>` : ""}
+        ${perms.paySupplier ? `<button class="btn btn-ghost flex1" style="padding:14px 6px;font-size:13px;border:1.5px solid var(--stamp);color:var(--stamp);" onclick="repOpenPaySupplier()">💸 دفع لمورد</button>` : ""}
       </div>
       ${perms.purchase ? `<button class="btn btn-ghost btn-block" style="margin-bottom:8px;" onclick="repOpenPurchase()">🛒 تسجيل شراء</button>` : ""}
       ${perms.sale ? `<button class="btn btn-ghost btn-block" style="margin-bottom:8px;color:var(--stamp);" onclick="repOpenReturn()">↩️ مرتجع من زبون</button>` : ""}
@@ -2575,7 +2576,7 @@ function renderRepDashboard() {
       <div class="section-title">مبيعاتي الأخيرة</div>
       ${mySales.length === 0 ? emptyState("لا توجد مبيعات بعد", true) : `<div class="card" style="margin-bottom:16px;">` + mySales.slice(0, 15).map((s) => {
         const cust = s.customerId ? (customers.find((c) => c.id === s.customerId) || {}).name : "نقدي";
-        return `<div class="list-row"><button class="icon-btn" style="color:var(--green);" onclick="printSale('${s.id}')">🖨</button>${perms.sale && !s.isReturn && !s.checkPayment ? `<button class="icon-btn" style="color:var(--inkSoft);" onclick="startEditSale('${s.id}')">✎</button>` : ""}<div class="flex1"><div class="truncate" style="font-size:12.5px;">${s.isReturn ? '<span style="color:var(--stamp);">🔄 مرتجع</span> · ' : ""}${s.editedAt ? "✏️ " : ""}${esc(cust)} · ${s.items.length} صنف</div><div class="mono row-sub">${fmtDateTime(s.ts)}</div></div><span class="mono" style="font-weight:700;">${fmt(s.total)}</span></div>`;
+        return `<div class="list-row"><button class="icon-btn" style="color:var(--green);" onclick="printSale('${s.id}')">🖨</button>${perms.editSale && !s.isReturn && !s.checkPayment ? `<button class="icon-btn" style="color:var(--inkSoft);" onclick="startEditSale('${s.id}')">✎</button>` : ""}<div class="flex1"><div class="truncate" style="font-size:12.5px;">${s.isReturn ? '<span style="color:var(--stamp);">🔄 مرتجع</span> · ' : ""}${s._pendingApproval ? '<span style="color:var(--gold);">⏳ بانتظار موافقة</span> · ' : s.editedAt ? "✏️ " : ""}${esc(cust)} · ${s.items.length} صنف</div><div class="mono row-sub">${fmtDateTime(s.ts)}</div></div><span class="mono" style="font-weight:700;">${fmt(s.total)}</span></div>`;
       }).join("") + `</div>`}
       <div class="section-title">تحصيلاتي الأخيرة</div>
       ${myVouchers.length === 0 ? emptyState("لا توجد تحصيلات بعد", true) : `<div class="card">` + myVouchers.slice(0, 15).map((v) => `<div class="list-row"><button class="icon-btn" style="color:var(--green);" onclick="repPrintVoucher('${v.id}')">🖨</button><div class="flex1"><div class="truncate" style="font-size:12.5px;">${esc(v.partyName)}${v.method === "check" ? " (شيك)" : ""}</div><div class="mono row-sub">${fmtDateTime(v.ts)}</div></div><span class="mono" style="font-weight:700;color:var(--green);">${fmt(v.amount)}</span></div>`).join("") + `</div>`}
@@ -2720,7 +2721,49 @@ function repCollectModalHtml() {
     </div>
     <button class="btn btn-green btn-block" onclick="repSaveCollect()">تسجيل التحصيل</button>`;
 }
+function repOpenPaySupplier() {
+  const rep = currentRep(); if (!rep) return;
+  if (!repPermissions(rep).paySupplier) { flash("الدفع للموردين مش مفعّل إلك"); return; }
+  state._repPaySupId = ""; state._repPayAmount = "";
+  state.modal = { type: "repPaySupplier" };
+  render();
+}
+function repResolveSupField(fieldId) {
+  const el = document.getElementById(fieldId); if (!el) return;
+  const s = scoped("suppliers").find((o) => normName(o.name) === normName(el.value));
+  const id = s ? s.id : "";
+  if (state._repPaySupId === id) return;
+  state._repPaySupId = id; render();
+}
+function repPaySupplierModalHtml() {
+  const rep = currentRep(); if (!rep) return "";
+  const settings = currentSettings();
+  const options = scoped("suppliers");
+  const sel = options.find((x) => x.id === state._repPaySupId);
+  const cash = repCashLedger(rep).withHim;
+  return `<div class="modal-title-row"><h3>💸 دفع لمورد</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="row-sub" style="margin-bottom:10px;">بيندفع من الكاش اللي معك: <strong class="mono">${fmt(cash)} ${esc(settings.currency)}</strong></div>
+    ${suggestFieldHtml("rep-pay-supplier", options, state._repPaySupId, "المورد — اكتب اسمه", "اكتب اسم المورد...", "repResolveSupField")}
+    ${sel ? (() => { const b = supplierBalance(sel); return `<div class="row-sub" style="margin-bottom:10px;">رصيده: <strong class="mono">${fmt(Math.abs(b))} ${b > 0.005 ? "إله علينا" : b < -0.005 ? "هو مدين إلنا" : ""}</strong></div>`; })() : ""}
+    <label class="field"><span class="lbl">المبلغ (نقدي)</span><input type="text" inputmode="decimal" class="mono" value="${esc(state._repPayAmount || "")}" oninput="state._repPayAmount=this.value;" /></label>
+    <button class="btn btn-green btn-block" onclick="repSavePaySupplier()">تسجيل الدفع</button>`;
+}
+function repSavePaySupplier() {
+  const rep = currentRep(); if (!rep) return;
+  const supId = state._repPaySupId;
+  const amount = parseFloat(state._repPayAmount) || 0;
+  if (!supId || amount <= 0) { flash("اختار المورد وحط المبلغ"); return; }
+  const cash = repCashLedger(rep).withHim;
+  if (amount > cash + 0.001 && !confirm(`المبلغ أكبر من الكاش اللي معك (${fmt(cash)}). متأكد؟`)) return;
+  const sup = scoped("suppliers").find((x) => x.id === supId);
+  const v = { id: uid(), ts: new Date().toISOString(), partyKind: "supplier", partyId: supId, partyName: sup ? sup.name : "", amount, desc: `دفع عن طريق: ${rep.name}`, method: "cash", cashAmount: amount, repId: rep.id, repCash: true };
+  addScoped("vouchers", v);
+  state._repLastPrint = { kind: "supvoucher", id: v.id };
+  flash("تم تسجيل الدفع للمورد");
+  closeModal();
+}
 function repPrintVoucher(id) { const v = scoped("vouchers").find((x) => x.id === id); if (v) printVoucher("customer", v); }
+function repPrintSupVoucher(id) { const v = scoped("vouchers").find((x) => x.id === id); if (v) printVoucher("supplier", v); }
 function repSaveCollect() {
   const rep = currentRep();
   if (!rep) return;
@@ -3016,6 +3059,10 @@ function renderHome() {
       <div class="stat-card"><div class="stat-label"><span>رصيد الصندوق</span><span>💵</span></div><div class="stat-value" style="color:${cb < 0 ? "var(--stamp)" : "var(--green)"}">${fmt(cb)} ${esc(settings.currency)}</div></div>
       <div class="stat-card"><div class="stat-label"><span>تنبيه مخزون</span><span>⚠️</span></div><div class="stat-value" style="color:${lowStock ? "var(--stamp)" : "var(--inkSoft)"}">${lowStock}</div></div>
     </div>
+    ${(() => { const n = repPendingEditsAll().length; if (!n) return "";
+      return `<div class="card" style="padding:12px 14px;margin-bottom:14px;border:1.5px solid var(--gold);background:var(--goldLight);cursor:pointer;" onclick="goScreen('reps')">
+        <div class="row-title">✏️ في ${n} تعديل فاتورة من المناديب بانتظار موافقتك</div>
+        <div class="row-sub">اكبس عشان تشوفهم وتوافق أو ترفض.</div></div>`; })()}
     ${(() => { const due = issuedDueSoon(); if (!due.length) return ""; const sum = due.reduce((a, c) => a + c.amount, 0);
       return `<div class="card" style="padding:12px 14px;margin-bottom:14px;border:1.5px solid var(--stamp);background:var(--stampLight);cursor:pointer;" onclick="goScreen('cashbox')">
         <div class="row-title" style="color:var(--stamp);">⚠️ شيكات صادرة مستحقة خلال أسبوع: ${due.length}</div>
@@ -3765,6 +3812,7 @@ function completeSale() {
   const products = scoped("products");
   let sale;
   if (state.editingSaleId) {
+    if (REP_MODE) repEditCtx = state.editingSaleId;
     const oldSale = scoped("sales").find((s) => s.id === state.editingSaleId);
     if (oldSale.sourceWarehouseId) {
       // فاتورة من سيارة/مستودع: الفرق بينزل أو بيرجع لنفس المستودع
@@ -3782,6 +3830,7 @@ function completeSale() {
     }
     sale = { ...oldSale, customerId, items: state.cart.map((c) => ({ productId: c.productId, name: c.name, price: c.price, qty: c.qty })), subtotal, tax, discount, total, paidNow: paidNum, payType: isCheck ? "credit" : payType, checkPayment: isCheck, editedAt: new Date().toISOString() };
     persistScoped("sales", scoped("sales").map((s) => (s.id === state.editingSaleId ? sale : s)));
+    repEditCtx = null;
     if (REP_MODE || state._activeRepId) state._repLastPrint = { kind: "sale", id: sale.id };
     flash("تم تحديث الفاتورة");
   } else {
@@ -3836,8 +3885,10 @@ function completeQuickSale() {
   let sale;
   if (state.editingSaleId) {
     const oldSale = scoped("sales").find((s) => s.id === state.editingSaleId);
+    if (REP_MODE) repEditCtx = state.editingSaleId;
     sale = { ...oldSale, customerId, items: [], quick: true, invoiceNo: state.saleForm.invoiceNo || "", photo: state.saleForm.photo || oldSale.photo || null, total, subtotal: total, tax: 0, discount: 0, paidNow: paidNum, payType: isCheck ? "credit" : payType, checkPayment: isCheck, editedAt: new Date().toISOString() };
     persistScoped("sales", scoped("sales").map((s) => (s.id === state.editingSaleId ? sale : s)));
+    repEditCtx = null;
     flash("تم تحديث الفاتورة");
   } else {
     sale = { id: uid(), ts: new Date().toISOString(), customerId, items: [], quick: true, invoiceNo: state.saleForm.invoiceNo || "", photo: state.saleForm.photo || null, total, subtotal: total, tax: 0, discount: 0, paidNow: paidNum, payType: isCheck ? "credit" : payType, checkPayment: isCheck, repId: state._activeRepId || (REP_MODE && currentRep() ? currentRep().id : undefined) };
@@ -3874,6 +3925,7 @@ function startEditSale(id) {
   if (REP_MODE) {
     const r = currentRep();
     if (!r || s.repId !== r.id) { flash("بتقدر تعدّل فواتيرك بس"); return; }
+    if (!repPermissions(r).editSale) { flash("تعديل الفواتير مش مفعّل إلك"); return; }
     if (s.isReturn || s.checkPayment) { flash("هاي الفاتورة (مرتجع/شيك) بتتعدّل من الإدارة"); return; }
     state._activeRepId = r.id; state._repLockedWarehouse = true;
   }
@@ -5651,6 +5703,7 @@ function printRepReport(repId, fromStr, toStr) {
   const cashDays = {};
   const addDay = (k, f, v) => { if (!cashDays[k]) cashDays[k] = { sales: 0, coll: 0, buy: 0, hand: 0 }; cashDays[k][f] += v; };
   scoped("purchases").filter((p) => p.repId === rep.id && new Date(p.ts) >= fromDate && new Date(p.ts) <= toDate && repPurchaseCash(p) > 0).forEach((p) => addDay(dKey(p.ts), "buy", repPurchaseCash(p)));
+  scoped("vouchers").filter((v) => v.repId === rep.id && new Date(v.ts) >= fromDate && new Date(v.ts) <= toDate && repSupPayCash(v) > 0).forEach((v) => addDay(dKey(v.ts), "buy", repSupPayCash(v)));
   sales.filter((s) => s.payType === "cash" && !s.isReturn).forEach((s) => addDay(dKey(s.ts), "sales", Math.min(Number(s.paidNow) || 0, Math.max(0, Number(s.total) || 0))));
   const cashVouchers = vouchers.filter((v) => v.partyKind !== "supplier" && v.method !== "check");
   cashVouchers.forEach((v) => addDay(dKey(v.ts), "coll", Number(v.cashAmount ?? v.amount) || 0));
@@ -5690,7 +5743,7 @@ function printRepReport(repId, fromStr, toStr) {
     <div style="border:2px solid #000;border-radius:6px;padding:6px 8px;margin:8px 0;">
       <div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;"><span>نقد من المبيعات</span><span>${fmt(cashSalesSum)}</span></div>
       <div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;"><span>نقد من التحصيلات</span><span>${fmt(cashCollSum)}</span></div>
-      ${cashBuySum > 0 ? `<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;"><span>دفع مشتريات من الكاش</span><span>−${fmt(cashBuySum)}</span></div>` : ""}
+      ${cashBuySum > 0 ? `<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;"><span>دفع مشتريات/موردين من الكاش</span><span>−${fmt(cashBuySum)}</span></div>` : ""}
       <div style="display:flex;justify-content:space-between;font-size:14px;font-weight:700;padding:4px 0;border-top:1px dashed #999;"><span>💵 مجموع النقد</span><span>${fmt(cashTotal)} ${esc(settings.currency)}</span></div>
       <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;padding:2px 0;"><span>سلّمني بالفترة</span><span>${fmt(handTotal)} ${esc(settings.currency)}</span></div>
       <div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-top:1px dashed #999;"><span>معه هلأ (كل الأيام)</span><strong>${fmt(withNow)} ${esc(settings.currency)}</strong></div>
@@ -6550,6 +6603,7 @@ function renderModal() {
   else if (m.type === "priceCalc") inner = priceCalcModalHtml(m.cartType, m.productId);
   else if (m.type === "repReport") inner = repReportModalHtml(m.repId);
   else if (m.type === "repCollect") inner = repCollectModalHtml();
+  else if (m.type === "repPaySupplier") inner = repPaySupplierModalHtml();
   else if (m.type === "repReturn") inner = repReturnModalHtml();
   else if (m.type === "repStatement") inner = repStatementModalHtml();
   else if (m.type === "repCustomers") inner = repCustomersModalHtml(m.repId);
@@ -7320,7 +7374,7 @@ function repMeta() { return loadKey("repMeta", null); }
 function repOutbox() { return loadKey("repOutbox", []) || []; }
 function repSetOutbox(o) { repApplying = true; try { saveKey("repOutbox", o); } finally { repApplying = false; } }
 function repSeriesMax() { return loadKey("repSeriesMax", {}) || {}; }
-function repDefaultPerms() { return { sale: true, collect: true, purchase: false, changePrice: false, addCustomer: true, allCustomers: false }; }
+function repDefaultPerms() { return { sale: true, collect: true, purchase: false, changePrice: false, addCustomer: true, allCustomers: false, editSale: false, paySupplier: false }; }
 function repCanEditPrice() { if (!REP_MODE) return true; const r = currentRep(); return !!(r && repPermissions(r).changePrice); }
 function repCanAddCustomer() { if (!REP_MODE) return true; const r = currentRep(); return !!(r && repPermissions(r).addCustomer); }
 
@@ -7338,12 +7392,14 @@ function repRecordDiff(key, next) {
     else if (key === "products" && Number(p.stock) !== Number(x.stock)) ops.push({ id: "op" + uid(), t: "stock", key, pid: x.id, d: Number(x.stock) - Number(p.stock) });
   });
   if (!ops.length) return;
+  if (repEditCtx) ops.forEach((op) => { op.forEdit = repEditCtx; });
   const o = repOutbox();
   ops.forEach((op) => o.push({ ...op, at: Date.now(), sent: false }));
   repSetOutbox(o);
   setTimeout(repFlush, 400);
 }
 var repFlushing = false;
+var repEditCtx = null; // وقت المندوب بيعدّل فاتورة: كل الحركات بتنربط بالفاتورة عشان الإدارة توافق عليها مع بعض
 async function repFlush() {
   if (!REP_MODE || repFlushing) return;
   const meta = repMeta(); const db = cloudInit();
@@ -7380,6 +7436,7 @@ function repApplyView(v) {
       const arr = ((v.data && v.data[k]) || []).map((x) => ({ ...x, accountId: acc }));
       const ids = new Set(arr.map((x) => x.id));
       pending.filter((o) => o.t === "add" && o.key === k && o.rec && !ids.has(o.rec.id)).forEach((o) => arr.unshift({ ...o.rec, accountId: acc }));
+      if (k === "sales") (v.pendingEdits || []).forEach((pe) => { const i = arr.findIndex((x) => x.id === pe.id); if (i !== -1 && pe.rec) arr[i] = { ...arr[i], ...pe.rec, accountId: acc, _pendingApproval: true }; });
       pending.filter((o) => o.t === "upd" && o.key === k && o.rec).forEach((o) => { const i = arr.findIndex((x) => x.id === o.rec.id); if (i !== -1) arr[i] = { ...arr[i], ...o.rec, accountId: acc }; });
       if (k === "products") pending.filter((o) => o.t === "stock").forEach((o) => { const p = arr.find((x) => x.id === o.pid); if (p) p.stock = (Number(p.stock) || 0) + Number(o.d || 0); });
       saveKey(k, arr);
@@ -7541,12 +7598,13 @@ function buildRepView(rep, mergedOps) {
     warehouseEntries = Object.keys(by).map((n, i) => ({ id: "agg_" + rep.warehouseId + "_" + i, warehouseId: rep.warehouseId, ts: "2000-01-01T00:00:00.000Z", type: by[n] >= 0 ? "in" : "out", productName: n, qty: Math.abs(by[n]), unit: "", party: "", note: "الرصيد" }));
   }
   let suppliers = [], purchases = [];
-  if (perms.purchase) {
-    purchases = scoped("purchases").filter((p) => p.repId === rep.id && recent(p)).map(repStrip);
+  if (perms.purchase) purchases = scoped("purchases").filter((p) => p.repId === rep.id && recent(p)).map(repStrip);
+  if (perms.purchase || perms.paySupplier) {
     suppliers = scoped("suppliers").map((s) => {
       const full = supplierBalance(s);
       const rp = purchases.filter((p) => p.supplierId === s.id).reduce((a, p) => a + (p.total - p.paidNow), 0);
-      return { ...repStrip(s), notes: "", opening: Math.round((full - rp) * 1000) / 1000 };
+      const rv = vouchers.filter((v) => v.partyKind === "supplier" && v.partyId === s.id).reduce((a, v) => a + v.amount, 0);
+      return { ...repStrip(s), notes: "", opening: Math.round((full - rp + rv) * 1000) / 1000 };
     });
   }
   const seriesMax = {};
@@ -7560,6 +7618,7 @@ function buildRepView(rep, mergedOps) {
     rep: { id: rep.id, name: rep.name, warehouseId: rep.warehouseId || "__main__", permissions: perms, customerIds: rep.customerIds || [] },
     data: { products, customers, suppliers, sales: sales.map(repStrip), vouchers: vouchers.map(repStrip), checks: [], purchases, warehouses, warehouseEntries },
     handovers, seriesMax, mergedOps: (mergedOps || []).slice(-300),
+    pendingEdits: Object.entries(rep.pendingEdits || {}).filter(([, e]) => e && e.rec).map(([id, e]) => ({ id, rec: repStrip(e.rec) })),
   };
 }
 function repHash(str) { let h = 0; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0; return h + ":" + str.length; }
@@ -7677,10 +7736,94 @@ async function repMergeInbox(docs) {
   }
   scheduleRepPublish(800);
 }
-function repApplyOp(op, rep) {
+// التعديل بس بالسعر (نفس الأصناف والكميات والزبون وطريقة الدفع)
+function salePriceOnlyChange(a, b) {
+  if (!a || !b) return false;
+  if (!(a.items || []).length || (a.customerId || "") !== (b.customerId || "") || a.payType !== b.payType) return false;
+  const k = (x) => (x.items || []).map((it) => it.productId + ":" + Number(it.qty)).sort().join("|");
+  return k(a) === k(b);
+}
+function repStashEdit(rep, sid, op) {
+  const reps = loadKey("reps", []) || [];
+  const i = reps.findIndex((r) => r.id === rep.id); if (i === -1) return false;
+  const pe = { ...(reps[i].pendingEdits || {}) };
+  const e = pe[sid] ? { ...pe[sid], ops: [...(pe[sid].ops || [])] } : { ops: [], at: Date.now() };
+  if (op.t === "upd") e.rec = op.rec; else e.ops.push(op);
+  e.at = Date.now();
+  pe[sid] = e;
+  reps[i] = { ...reps[i], pendingEdits: pe };
+  saveKey("reps", reps);
+  return true;
+}
+function repPendingEditsAll() {
+  const out = [];
+  (loadKey("reps", []) || []).filter((r) => r.accountId === state.activeAccountId).forEach((r) => Object.entries(r.pendingEdits || {}).forEach(([sid, e]) => { if (e && e.rec) out.push({ rep: r, sid, e }); }));
+  return out.sort((a, b) => (a.e.at || 0) - (b.e.at || 0));
+}
+function approveRepEdit(repId, sid) {
+  const reps = loadKey("reps", []) || [];
+  const i = reps.findIndex((r) => r.id === repId); if (i === -1) return;
+  const e = (reps[i].pendingEdits || {})[sid]; if (!e) return;
+  const rep = reps[i];
+  let ok = true;
+  (e.ops || []).forEach((op) => { try { repApplyOp(op, rep, true); } catch (x) { console.error(x); } });
+  if (e.rec) { try { ok = repApplyOp({ t: "upd", key: "sales", rec: e.rec }, rep, true); } catch (x) { ok = false; console.error(x); } }
+  const reps2 = loadKey("reps", []) || []; const j = reps2.findIndex((r) => r.id === repId);
+  const pe = { ...(reps2[j].pendingEdits || {}) }; delete pe[sid];
+  reps2[j] = { ...reps2[j], pendingEdits: pe }; saveKey("reps", reps2);
+  cloudMarkDirty(rep.accountId, Date.now()); cloudScheduleSync(); scheduleRepPublish(300);
+  flash(ok ? "✅ تمت الموافقة وتعدّلت الفاتورة" : "⚠️ ما لقيت الفاتورة الأصلية — ما تعدّلت");
+}
+function rejectRepEdit(repId, sid) {
+  if (!confirm("رفض التعديل؟ الفاتورة بتضل زي ما كانت وبترجع عند المندوب.")) return;
+  const reps = loadKey("reps", []) || [];
+  const i = reps.findIndex((r) => r.id === repId); if (i === -1) return;
+  const pe = { ...(reps[i].pendingEdits || {}) }; delete pe[sid];
+  reps[i] = { ...reps[i], pendingEdits: pe }; saveKey("reps", reps);
+  cloudMarkDirty(reps[i].accountId, Date.now()); cloudScheduleSync(); scheduleRepPublish(300);
+  flash("❌ انرفض التعديل");
+}
+function repPendingEditsHtml() {
+  const list = repPendingEditsAll();
+  if (!list.length) return "";
+  const customers = scoped("customers");
+  return `<div class="card" style="padding:12px 14px;margin-bottom:14px;border:1.5px solid var(--gold);background:var(--goldLight);">
+    <div class="row-title" style="margin-bottom:8px;">✏️ تعديلات فواتير بانتظار موافقتك: ${list.length}</div>
+    ${list.map(({ rep, sid, e }) => {
+      const old = scoped("sales").find((x) => x.id === sid);
+      const nw = e.rec;
+      const cust = (id) => id ? ((customers.find((c) => c.id === id) || {}).name || "") : "عميل نقدي";
+      const lines = [];
+      if (old) {
+        const om = {}, nm = {};
+        (old.items || []).forEach((it) => { om[it.name] = it; });
+        (nw.items || []).forEach((it) => { nm[it.name] = it; });
+        Object.keys({ ...om, ...nm }).forEach((n) => {
+          const a = om[n], b = nm[n];
+          if (a && !b) lines.push(`➖ شال: ${esc(n)} (${fmt(a.qty)})`);
+          else if (!a && b) lines.push(`➕ زاد: ${esc(n)} ${fmt(b.qty)} × ${fmt(b.price)}`);
+          else if (Number(a.qty) !== Number(b.qty) || Number(a.price) !== Number(b.price)) lines.push(`✏️ ${esc(n)}: ${fmt(a.qty)} × ${fmt(a.price)} ← ${fmt(b.qty)} × ${fmt(b.price)}`);
+        });
+        if ((old.customerId || "") !== (nw.customerId || "")) lines.push(`👤 الزبون: ${esc(cust(old.customerId))} ← ${esc(cust(nw.customerId))}`);
+        if (old.payType !== nw.payType) lines.push(`💳 الدفع: ${old.payType === "cash" ? "نقدي" : "آجل"} ← ${nw.payType === "cash" ? "نقدي" : "آجل"}`);
+      }
+      return `<div style="background:var(--paper);border-radius:10px;padding:10px;margin-bottom:8px;">
+        <div class="row-title" style="font-size:13.5px;">${esc(rep.name)} · ${old ? esc(docNo(old, "sales")) : "فاتورة"} · ${esc(cust(nw.customerId))}</div>
+        <div class="row-sub">المجموع: <span class="mono">${old ? fmt(old.total) : "—"}</span> ← <strong class="mono">${fmt(nw.total)}</strong></div>
+        ${lines.length ? `<div style="font-size:12px;margin-top:4px;line-height:1.7;">${lines.join("<br>")}</div>` : ""}
+        <div class="row-flex" style="gap:8px;margin-top:8px;">
+          <button class="btn btn-green flex1" style="padding:8px;" onclick="approveRepEdit('${rep.id}','${sid}')">✅ موافق</button>
+          <button class="btn btn-ghost flex1" style="padding:8px;color:var(--stamp);" onclick="rejectRepEdit('${rep.id}','${sid}')">❌ رفض</button>
+        </div></div>`;
+    }).join("")}
+  </div>`;
+}
+function repApplyOp(op, rep, force) {
   const perms = repPermissions(rep);
   const acc = rep.accountId;
   const key = op.key;
+  // تعديل فاتورة من المندوب والإدارة طالبة موافقة: بنحفظه على جنب لحد ما توافق
+  // (تعديل الفاتورة بيمشي مباشرة — الصلاحية بتنفحص عند المندوب: إذا الزر مطفي ما بيطلعله ✎ أصلاً)
   if (op.t === "stock") {
     if (!(perms.sale || perms.purchase)) return false;
     const i = (DB.products || []).findIndex((p) => p.id === op.pid && p.accountId === acc);
@@ -7706,7 +7849,8 @@ function repApplyOp(op, rep) {
     warehouseEntries: perms.sale || perms.purchase, purchases: perms.purchase, suppliers: perms.purchase,
     customers: perms.addCustomer, products: perms.purchase, cashHandovers: true,
   };
-  if (!allowed[key]) return false;
+  if (key === "vouchers" && op.rec.partyKind === "supplier") { if (!perms.paySupplier && !perms.purchase) return false; }
+  else if (!allowed[key]) return false;
   if (key === "cashHandovers") {
     const hs = loadKey("cashHandovers", []) || [];
     if (hs.some((h) => h.id === op.rec.id)) return false;
@@ -7742,7 +7886,7 @@ async function repRemoveCloud(email) {
 }
 
 /* ---------- شاشة المندوبين عند صاحب الشركة ---------- */
-const REP_PERM_LABELS = [["sale", "🛒 بيع"], ["collect", "💰 تحصيل"], ["purchase", "🚚 شراء"], ["changePrice", "✏️ تعديل السعر"], ["addCustomer", "➕ إضافة زبون"], ["allCustomers", "👥 كل الزباين"]];
+const REP_PERM_LABELS = [["sale", "🛒 بيع"], ["collect", "💰 تحصيل"], ["purchase", "🚚 شراء"], ["changePrice", "✏️ تعديل السعر"], ["addCustomer", "➕ إضافة زبون"], ["allCustomers", "👥 كل الزباين"], ["editSale", "📝 تعديل الفواتير"], ["paySupplier", "💸 دفع للموردين"]];
 function changeRepPlace(repId) { state._repPlaceEdit = state._repPlaceEdit === repId ? null : repId; render(); }
 function setRepPlace(repId, wh) {
   if (!wh) return;
@@ -7769,13 +7913,15 @@ function repPlaceLabel(rep) {
 // من 9/11/2026 (بعد ما تسكّرت الحسابات) كل شراء من مندوب بيتحسب من الكاش اللي معه
 function isRepCashBuy(p) { return !!(p && p.repId && (p.repCash || Date.parse(p.ts) >= 1794171600000)); }
 function repPurchaseCash(p) { return isRepCashBuy(p) && p.payType !== "check" ? Math.min(Number(p.paidNow) || 0, Math.max(0, Number(p.total) || 0)) : 0; }
-function repCashPaidOut(repId) { return (DB.purchases || []).filter((p) => p.repId === repId).reduce((a, p) => a + repPurchaseCash(p), 0); }
+function repSupPayCash(v) { return v && v.repId && v.partyKind === "supplier" && v.method !== "check" && v.method !== "owncheck" ? (Number(v.amount) || 0) : 0; }
+function repCashPaidOut(repId) { return (DB.purchases || []).filter((p) => p.repId === repId).reduce((a, p) => a + repPurchaseCash(p), 0) + (DB.vouchers || []).filter((v) => v.repId === repId).reduce((a, v) => a + repSupPayCash(v), 0); }
 function repCashLedger(r) {
   const cashOf = (s) => Math.min(Number(s.paidNow) || 0, Math.max(0, Number(s.total) || 0));
   const items = [];
   (DB.sales || []).filter((s) => s.repId === r.id && !s.isReturn && s.payType === "cash" && cashOf(s) > 0).forEach((s) => items.push({ ts: s.ts, kind: "بيع نقدي", who: (DB.customers.find((c) => c.id === s.customerId) || {}).name || "عميل نقدي", amount: cashOf(s), doc: docNo(s, "sales") }));
   (DB.vouchers || []).filter((v) => v.repId === r.id && v.partyKind === "customer" && v.method !== "check").forEach((v) => items.push({ ts: v.ts, kind: "قبض", who: (DB.customers.find((c) => c.id === v.partyId) || {}).name || "", amount: Number(v.cashAmount ?? v.amount) || 0 }));
   (DB.purchases || []).filter((p) => p.repId === r.id && repPurchaseCash(p) > 0).forEach((p) => items.push({ ts: p.ts, kind: "شراء نقدي", who: (DB.suppliers.find((x) => x.id === p.supplierId) || {}).name || "", amount: -repPurchaseCash(p), doc: docNo(p, "purchases") }));
+  (DB.vouchers || []).filter((v) => v.repId === r.id && repSupPayCash(v) > 0).forEach((v) => items.push({ ts: v.ts, kind: "دفع لمورد", who: v.partyName || "", amount: -repSupPayCash(v), doc: docNo(v, "vouchers") }));
   const hands = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === r.id && h.status !== "rejected");
   const inTotal = items.reduce((a, x) => a + x.amount, 0);
   const outTotal = hands.reduce((a, h) => a + h.amount, 0);
@@ -7812,7 +7958,8 @@ function repTodayStats(r) {
   const collCheck = vouchers.filter((v) => v.method === "check").reduce((a, v) => a + v.amount, 0);
   const handed = hands.filter((h) => h.status === "confirmed").reduce((a, h) => a + h.amount, 0);
   const pending = hands.filter((h) => h.status === "pending").reduce((a, h) => a + h.amount, 0);
-  const buyCash = (DB.purchases || []).filter((p) => p.repId === r.id && isToday(p)).reduce((a, p) => a + repPurchaseCash(p), 0);
+  const buyCash = (DB.purchases || []).filter((p) => p.repId === r.id && isToday(p)).reduce((a, p) => a + repPurchaseCash(p), 0)
+    + (DB.vouchers || []).filter((v) => v.repId === r.id && isToday(v)).reduce((a, v) => a + repSupPayCash(v), 0);
   const cashWith = Math.max(0, cashSales + collCash - buyCash - handed - pending);
   return { n: sales.filter((s) => !s.isReturn).length, salesTotal, returns, cashSales, credit, collCash, collCheck, buyCash, handed, pending, cashWith };
 }
@@ -7827,7 +7974,7 @@ function repTodayCardHtml(r) {
     ${t.returns ? row("مرتجعات", t.returns) : ""}
     ${row("تحصيل كاش", t.collCash)}
     ${t.collCheck ? row("تحصيل شيكات", t.collCheck) : ""}
-    ${t.buyCash ? row("دفع مشتريات من الكاش", t.buyCash) : ""}
+    ${t.buyCash ? row("دفع مشتريات/موردين من الكاش", t.buyCash) : ""}
     ${row("سلّمك كاش", t.handed)}
     ${t.pending ? row("تسليم بانتظار تأكيدك", t.pending) : ""}
   </div>
@@ -7843,7 +7990,7 @@ function renderRepsScreen() {
   const myRepIds = new Set(reps.map((r) => r.id));
   const pendingHand = (loadKey("cashHandovers", []) || []).filter((h) => myRepIds.has(h.repId) && h.status === "pending");
   const whs = scoped("warehouses");
-  let html = `<button class="btn btn-ghost btn-block" style="margin-bottom:10px;" onclick="repPullInboxNow(this)">🔄 استلم حركات المناديب الآن</button>`;
+  let html = repPendingEditsHtml() + `<button class="btn btn-ghost btn-block" style="margin-bottom:10px;" onclick="repPullInboxNow(this)">🔄 استلم حركات المناديب الآن</button>`;
   if (state.repRulesMissing) {
     html += `<div class="card" style="padding:14px;margin-bottom:14px;border:2px solid var(--stamp);background:var(--stampLight);">
       <div class="row-title" style="color:var(--stamp);margin-bottom:6px;">⚠️ لازم تحدّث قواعد الحماية بـ Firebase</div>
