@@ -5121,14 +5121,19 @@ function renderInventory() {
   const q = state.invQuery.toLowerCase();
   const filtered = products.filter((p) => p.name.toLowerCase().includes(q) || (p.sku || "").toLowerCase().includes(q) || (q.length >= 4 && productCodes(p).some((k) => k.includes(q))));
   const totalValue = products.reduce((a, p) => a + p.cost * p.stock, 0);
-  let html = `<div class="row-flex" style="margin-bottom:10px;">
-    <div class="search-wrap flex1"><span class="search-icon">🔍</span>
-      <input id="inventory-search" placeholder="ابحث بالاسم أو الرمز..." value="${esc(state.invQuery)}" oninput="state.invQuery=this.value;render();" /></div>
-    <button class="badge-btn" style="background:var(--greenLight);color:var(--green);font-size:18px;" onclick="openScanModal('inventory')">📷</button>
-    <button class="badge-btn" style="background:var(--greenLight);color:var(--green);" onclick="printInventoryReport()">🖨</button>
-    <button class="badge-btn" style="background:var(--gold);color:#fff;" onclick="openBarcodeLabelsModal()">🏷️</button>
-    <button class="badge-btn" style="background:var(--stamp);color:#fff;" onclick="goScreen('damaged')">💔</button>
-    <button class="badge-btn" style="background:var(--green);color:#fff;" onclick="openProductModal(null)">＋</button>
+  const ib = "flex:1;padding:10px 4px;border-radius:12px;border:none;font-size:12px;font-weight:600;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;";
+  let html = `<div class="row-flex" style="gap:8px;margin-bottom:10px;">
+    <button style="${ib}background:var(--green);color:#fff;" onclick="openProductModal(null)"><span style="font-size:20px;">＋</span>صنف جديد</button>
+    <button style="${ib}background:var(--greenLight);color:var(--green);" onclick="printInventoryReport()"><span style="font-size:20px;">🖨</span>طباعة</button>
+    <button style="${ib}background:var(--gold);color:#fff;" onclick="openBarcodeLabelsModal()"><span style="font-size:20px;">🏷️</span>باركود</button>
+    <button style="${ib}background:var(--stamp);color:#fff;" onclick="goScreen('damaged')"><span style="font-size:20px;">💔</span>تالف</button>
+  </div>
+  <div class="row-flex" style="gap:8px;margin-bottom:12px;">
+    <div class="search-wrap flex1" style="border:2px solid var(--green);border-radius:14px;padding:4px 6px;background:var(--paper);">
+      <span class="search-icon" style="font-size:20px;">🔍</span>
+      <input id="inventory-search" style="font-size:17px;padding:12px 40px 12px 8px;border:none;background:transparent;box-shadow:none;" placeholder="ابحث باسم الصنف أو الباركود..." value="${esc(state.invQuery)}" oninput="state.invQuery=this.value;render();" />
+    </div>
+    <button style="width:58px;border-radius:14px;border:none;background:var(--green);color:#fff;font-size:24px;cursor:pointer;" onclick="openScanModal('inventory')">📷</button>
   </div>
   <div class="flex-between" style="margin-bottom:10px;padding:8px 12px;background:var(--greenLight);border-radius:8px;"><strong style="font-size:12.5px;">إجمالي قيمة المخزون (تكلفة)</strong><strong class="mono">${fmt(totalValue)} ${esc(settings.currency)}</strong></div>`;
   if (filtered.length === 0) html += emptyState("لا توجد منتجات");
