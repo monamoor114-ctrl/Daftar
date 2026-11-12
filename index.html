@@ -3063,6 +3063,12 @@ function renderHome() {
       return `<div class="card" style="padding:12px 14px;margin-bottom:14px;border:1.5px solid var(--gold);background:var(--goldLight);cursor:pointer;" onclick="goScreen('reps')">
         <div class="row-title">✏️ في ${n} تعديل فاتورة من المناديب بانتظار موافقتك</div>
         <div class="row-sub">اكبس عشان تشوفهم وتوافق أو ترفض.</div></div>`; })()}
+    ${(() => { const due = receivedChecksDue(); if (!due.length) return ""; const sum = due.reduce((a, c) => a + c.amount, 0); const t = localDayStr(0);
+      const when = (c) => c.dueDate < t ? "فات موعده" : c.dueDate === t ? "اليوم" : "بكرة";
+      return `<div class="card" style="padding:12px 14px;margin-bottom:14px;border:1.5px solid var(--green);background:var(--greenLight);cursor:pointer;" onclick="state._checksFilter='pending';goScreen('cashbox')">
+        <div class="row-title" style="color:var(--green);">💰 شيكات بإيدك موعد صرفها قرب: ${due.length}</div>
+        <div class="row-sub">المجموع ${fmt(sum)} ${esc(settings.currency)} — جهّزها للصرف أو الإيداع. اكبس للتفاصيل.</div>
+        <div style="font-size:12px;margin-top:4px;line-height:1.7;">${due.slice(0, 5).map((c) => `• ${esc(String(c.desc || "").replace(/^شيك من: /, "").split(" — ")[0])}: <span class="mono">${fmt(c.amount)}</span> — <strong style="color:${c.dueDate < t ? "var(--stamp)" : "inherit"};">${when(c)}</strong>`).join("<br>")}${due.length > 5 ? "<br>…" : ""}</div></div>`; })()}
     ${(() => { const due = issuedDueSoon(); if (!due.length) return ""; const sum = due.reduce((a, c) => a + c.amount, 0);
       return `<div class="card" style="padding:12px 14px;margin-bottom:14px;border:1.5px solid var(--stamp);background:var(--stampLight);cursor:pointer;" onclick="goScreen('cashbox')">
         <div class="row-title" style="color:var(--stamp);">⚠️ شيكات صادرة مستحقة خلال أسبوع: ${due.length}</div>
@@ -4876,6 +4882,11 @@ function deleteExpense(id) {
 
 /* ===================== CASHBOX ===================== */
 /* ===== الشيكات الصادرة (تصدير شيك لمورد) ===== */
+function localDayStr(offsetDays) { const d = new Date(Date.now() + (offsetDays || 0) * 864e5); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+// شيكات بإيدي (من الزباين أو مجيّرة إلي): تنبيه قبل يوم من موعد صرفها، وبيومها، وإذا فات وما انصرفت
+function receivedChecksDue() { const t1 = localDayStr(1); return scoped("checks").filter((c) => c.status === "pending" && c.dueDate && c.dueDate <= t1).sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate))); }
+// شيكات مجيّرة: تنبيه قبل يوم من موعد صرفها (بكرة) وبيومها
+function endorsedChecksSoon() { const t = localDayStr(0), t1 = localDayStr(1); return scoped("checks").filter((c) => c.status === "endorsed" && c.dueDate && c.dueDate >= t && c.dueDate <= t1); }
 function issuedDueSoon() {
   const lim = Date.now() + 7 * 864e5;
   return scoped("issuedChecks").filter((c) => c.status === "pending" && c.dueDate && new Date(c.dueDate + "T23:59:59").getTime() <= lim);
