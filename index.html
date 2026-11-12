@@ -5646,14 +5646,24 @@ function monthLabel(key) {
   return `${names[parseInt(m, 10) - 1]} ${y}`;
 }
 // بيحسب "المتبقي له" لشهر معيّن آخذ بعين الاعتبار أي زيادة سحبها في الأشهر اللي قبله (بتتخصم من هالشهر تلقائي، مش بترجع تتصفّر)
+// الراتب حسب الشهر: إذا الراتب تغيّر، الأشهر القديمة بتضل على الراتب القديم
+function salaryFor(emp, mk) {
+  if (!emp) return 0;
+  const h = Array.isArray(emp.salaryHistory) ? [...emp.salaryHistory].sort((a, b) => String(a.from).localeCompare(String(b.from))) : [];
+  if (!h.length) return Number(emp.monthlySalary) || 0;
+  let amt = Number(h[0].amount) || 0;
+  h.forEach((x) => { if (String(x.from) <= mk) amt = Number(x.amount) || 0; });
+  return amt;
+}
 function employeeRunningBalance(employeeId, monthlySalary, uptoMonthKey) {
+  const emp = scoped("employees").find((e) => e.id === employeeId);
   const allTx = scoped("employeeTx").filter((t) => t.employeeId === employeeId);
   const monthsWithTx = [...new Set(allTx.map((t) => monthKeyOf(t.ts)))];
   const months = [...new Set([...monthsWithTx, uptoMonthKey])].filter((m) => m <= uptoMonthKey).sort();
   let balance = 0;
   for (const m of months) {
     const withdrawnThisMonth = allTx.filter((t) => monthKeyOf(t.ts) === m).reduce((a, t) => a + t.amount, 0);
-    balance += monthlySalary - withdrawnThisMonth;
+    balance += (emp ? salaryFor(emp, m) : monthlySalary) - withdrawnThisMonth;
   }
   return balance;
 }
@@ -5879,7 +5889,24 @@ function saveEmployeeFromForm() {
   const monthlySalary = parseFloat(document.getElementById("emp-salary").value) || 0;
   if (!name) return;
   const list = scoped("employees");
-  if (id) persistScoped("employees", list.map((e) => (e.id === id ? { ...e, name, monthlySalary } : e)));
+  if (id) {
+    const old = list.find((e) => e.id === id) || {};
+    const fromEl = document.getElementById("emp-from"), prevEl = document.getElementById("emp-prev");
+    const from = fromEl ? fromEl.value : currentMonthKey();
+    const prev = prevEl && prevEl.value.trim() !== "" ? parseFloat(prevEl.value) : null;
+    let hist = Array.isArray(old.salaryHistory) && old.salaryHistory.length ? old.salaryHistory.slice() : [{ from: "0000-00", amount: Number(old.monthlySalary) || 0 }];
+    const changed = Math.abs((Number(old.monthlySalary) || 0) - monthlySalary) > 0.001 || (prev != null && Math.abs(salaryFor({ ...old, salaryHistory: hist }, prevMonthKey(from)) - prev) > 0.001);
+    if (changed) {
+      if (prev != null && !isNaN(prev)) {
+        // الراتب قبل الشهر المختار
+        hist = hist.filter((x) => String(x.from) < from);
+        if (!hist.length) hist = [{ from: "0000-00", amount: prev }];
+        else hist[hist.length - 1] = { ...hist[hist.length - 1], amount: prev };
+      } else hist = hist.filter((x) => String(x.from) < from);
+      hist.push({ from, amount: monthlySalary });
+    }
+    persistScoped("employees", list.map((e) => (e.id === id ? { ...e, name, monthlySalary, ...(changed ? { salaryHistory: hist } : {}) } : e)));
+  }
   else persistScoped("employees", [...list, { id: uid(), name, monthlySalary }]);
   closeModal();
 }
@@ -5890,10 +5917,20 @@ function deleteEmployee(id) {
   closeModal();
 }
 function openEmployeeDetail(id) { state.modal = { type: "employeeDetail", id }; render(); }
+function prevMonthKey(mk) { let [y, m] = String(mk).split("-").map(Number); m -= 1; if (m < 1) { m = 12; y -= 1; } return `${y}-${String(m).padStart(2, "0")}`; }
 function employeeModalHtml(emp) {
+  const mk = currentMonthKey();
+  const months = []; { let k = mk; for (let i = 0; i < 6; i++) { months.push(k); k = prevMonthKey(k); } }
+  const prevSal = emp ? salaryFor(emp, prevMonthKey(mk)) : 0;
   return `<div class="modal-title-row"><h3>${emp ? "تعديل موظف" : "موظف جديد"}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <label class="field"><span class="lbl">اسم الموظف</span><input id="emp-name" value="${esc(emp ? emp.name : "")}" autofocus /></label>
     <label class="field"><span class="lbl">الراتب الشهري</span><input id="emp-salary" type="text" inputmode="decimal" class="mono" value="${emp ? emp.monthlySalary : ""}" /></label>
+    ${emp ? `<div class="card" style="padding:10px 12px;margin-bottom:12px;background:var(--goldLight);">
+      <div class="row-sub" style="margin-bottom:8px;">إذا غيّرت الراتب: الأشهر القديمة بتضل على الراتب القديم، والجديد بيبلش من الشهر اللي بتختاره.</div>
+      <div class="grid2">
+        <label class="field" style="margin:0;"><span class="lbl">الراتب الجديد من شهر</span><select id="emp-from">${months.map((m) => `<option value="${m}">${monthLabel(m)}</option>`).join("")}</select></label>
+        <label class="field" style="margin:0;"><span class="lbl">الراتب قبل هيك</span><input id="emp-prev" type="text" inputmode="decimal" class="mono" value="${prevSal}" /></label>
+      </div></div>` : ""}
     <div class="row-flex">
       ${emp ? `<button class="btn btn-stamp" onclick="deleteEmployee('${emp.id}')">حذف</button>` : ``}
       <button class="btn btn-green flex1" onclick="saveEmployeeFromForm()">حفظ</button>
@@ -5908,7 +5945,8 @@ function employeeDetailHtml(id) {
   const thisMonthTx = allTx.filter((t) => monthKeyOf(t.ts) === mk);
   const withdrawn = thisMonthTx.reduce((a, t) => a + t.amount, 0);
   const remaining = employeeRunningBalance(id, emp.monthlySalary, mk);
-  const carriedFromBefore = remaining - (emp.monthlySalary - withdrawn);
+  const salNow = salaryFor(emp, mk);
+  const carriedFromBefore = remaining - (salNow - withdrawn);
   return `<div class="modal-title-row"><h3>👷 ${esc(emp.name)}</h3>
     <div class="row-flex" style="gap:12px;">
       <button class="icon-btn" style="color:var(--green);padding:0;" onclick="printEmployeeStatement('${id}')">🖨</button>
@@ -5916,7 +5954,7 @@ function employeeDetailHtml(id) {
       <button class="close-x" onclick="closeModal()">✕</button>
     </div></div>
     <div class="stat-row" style="grid-template-columns:1fr 1fr;margin-bottom:14px;">
-      <div class="stat-card"><div class="stat-label"><span>الراتب الشهري</span></div><div class="stat-value">${fmt(emp.monthlySalary)}</div></div>
+      <div class="stat-card"><div class="stat-label"><span>الراتب الشهري</span></div><div class="stat-value">${fmt(salNow)}</div></div>
       <div class="stat-card"><div class="stat-label"><span>مسحوب (${monthLabel(mk)})</span></div><div class="stat-value" style="color:var(--stamp);">${fmt(withdrawn)}</div></div>
     </div>
     ${Math.abs(carriedFromBefore) > 0.001 ? `<div class="row-sub" style="text-align:center;margin-bottom:8px;">${carriedFromBefore < 0 ? `⬅️ منقول عليه من شهر سابق: ${fmt(Math.abs(carriedFromBefore))}` : `⬅️ منقول له من شهر سابق: ${fmt(carriedFromBefore)}`}</div>` : ""}
@@ -5941,12 +5979,12 @@ function printEmployeeStatement(id) {
   const mk = currentMonthKey();
   const thisMonthTx = scoped("employeeTx").filter((t) => t.employeeId === id && monthKeyOf(t.ts) === mk).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   const withdrawn = thisMonthTx.reduce((a, t) => a + t.amount, 0);
-  const remaining = emp.monthlySalary - withdrawn;
+  const remaining = salaryFor(emp, mk) - withdrawn;
   const rows = thisMonthTx.map((t) => `<tr style="border-bottom:1px dotted #ccc;"><td style="text-align:right;padding:3px 0;">${fmtDate(t.ts)}</td><td style="text-align:right;">${esc(t.desc || "سحب")}</td><td style="text-align:center;">${fmt(t.amount)}</td></tr>`).join("");
   const html = `${printHead(settings)}
     <div style="text-align:center;font-weight:700;font-size:13px;margin-bottom:4px;">كشف راتب: ${esc(emp.name)}</div>
     <div style="text-align:center;font-size:11px;color:#666;margin-bottom:12px;">${monthLabel(mk)}</div>
-    <div style="display:flex;justify-content:space-between;font-size:12px;"><span>الراتب الشهري</span><strong>${fmt(emp.monthlySalary)}</strong></div>
+    <div style="display:flex;justify-content:space-between;font-size:12px;"><span>الراتب الشهري</span><strong>${fmt(salaryFor(emp, mk))}</strong></div>
     <table style="width:100%;font-size:11px;border-collapse:collapse;margin:10px 0;">
       <thead><tr style="border-bottom:1px solid #999;"><th style="text-align:right;">التاريخ</th><th style="text-align:right;">البيان</th><th>المبلغ</th></tr></thead>
       <tbody>${rows || `<tr><td colspan="3" style="text-align:center;color:#888;padding:8px 0;">لا توجد سحوبات هذا الشهر</td></tr>`}</tbody>
