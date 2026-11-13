@@ -6438,7 +6438,11 @@ function printPartyStatement(kind, partyId) {
         label: `فاتورة <bdi>${docNo(t, "sales")}</bdi>`, note: (t.isReturn ? "مرتجع" : "") + (t.quick && t.invoiceNo ? (t.isReturn ? " · " : "") + esc(t.invoiceNo) : ""),
       });
       // المبلغ اللي انقبض مع الفاتورة نفسها (نقدي) لازم ينطرح، وإلا الكشف بيطلع أعلى من الرصيد الحقيقي
-      if (Number(t.paidNow)) rows.push({ ts: new Date(new Date(t.ts).getTime() + 1).toISOString(), amount: -Number(t.paidNow), label: "دفعة نقدي", note: `مع الفاتورة <bdi>${docNo(t, "sales")}</bdi>` });
+      if (Number(t.paidNow)) {
+        const chks = t.checkPayment ? scoped("checks").filter((c) => c.saleId === t.id) : [];
+        const chkNote = chks.map((c) => [c.checkNo ? "رقم " + esc(String(c.checkNo)) : "", c.dueDate ? "تاريخ " + esc(c.dueDate.split("-").reverse().join("/")) : ""].filter(Boolean).join(" · ")).filter(Boolean).join(" / ");
+        rows.push({ ts: new Date(new Date(t.ts).getTime() + 1).toISOString(), amount: -Number(t.paidNow), label: t.checkPayment ? "دفعة بشيك" : "دفعة نقدي", note: `مع الفاتورة <bdi>${docNo(t, "sales")}</bdi>${chkNote ? " · " + chkNote : ""}` });
+      }
     });
     scoped("vouchers").filter((v) => v.partyKind === "customer" && v.partyId === custParty.id).forEach((v) => rows.push({
       ts: v.ts, amount: -v.amount, label: v.method === "check" ? "تحصيل شيك" : "تحصيل", note: esc((v.desc || "").replace(/^تحصيل\s*/, "")),
