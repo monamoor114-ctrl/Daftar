@@ -2532,7 +2532,7 @@ function renderRepDashboard() {
   const customers = scoped("customers");
   const todayStr0 = new Date().toDateString();
   // الكاش اللي مع المندوب = كل النقدي اللي قبضه (مش بس اليوم) − كل اللي سلّمه
-  const cashSalesToday = mySales.filter((s) => s.payType === "cash" && !s.isReturn).reduce((a, s) => a + Math.min(Number(s.paidNow) || 0, Math.max(0, Number(s.total) || 0)), 0);
+  const cashSalesToday = mySales.reduce((a, s) => a + saleCashPart(s), 0);
   const cashVouchersToday = myVouchers.filter((v) => v.partyKind !== "supplier" && v.method !== "check").reduce((a, v) => a + (v.cashAmount ?? v.amount), 0);
   const myHandoversToday = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === rep.id);
   const handedOverToday = myHandoversToday.filter((h) => h.status !== "rejected").reduce((a, h) => a + h.amount, 0);
@@ -2838,7 +2838,7 @@ function repHandoverModalHtml() {
   const mySales = scoped("sales").filter((s) => s.repId === rep.id);
   const myVouchers = scoped("vouchers").filter((v) => v.repId === rep.id);
   const todayStr0 = new Date().toDateString();
-  const cashSalesToday = mySales.filter((s) => s.payType === "cash" && !s.isReturn).reduce((a, s) => a + Math.min(Number(s.paidNow) || 0, Math.max(0, Number(s.total) || 0)), 0);
+  const cashSalesToday = mySales.reduce((a, s) => a + saleCashPart(s), 0);
   const cashVouchersToday = myVouchers.filter((v) => v.partyKind !== "supplier" && v.method !== "check").reduce((a, v) => a + (v.cashAmount ?? v.amount), 0);
   const myHandoversToday = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === rep.id && h.status !== "rejected");
   const handedOverToday = myHandoversToday.reduce((a, h) => a + h.amount, 0);
@@ -5735,7 +5735,7 @@ function printRepReport(repId, fromStr, toStr) {
   const customers = scoped("customers");
   const sales = scoped("sales").filter((s) => s.repId === rep.id && new Date(s.ts) >= fromDate && new Date(s.ts) <= toDate).sort((a, b) => new Date(a.ts) - new Date(b.ts));
   const totalSales = sales.reduce((a, s) => a + s.total, 0);
-  const totalCash = sales.filter((s) => s.payType === "cash").reduce((a, s) => a + Math.min(Number(s.paidNow) || 0, Math.max(0, Number(s.total) || 0)), 0);
+  const totalCash = sales.reduce((a, s) => a + saleCashPart(s), 0);
   const totalCredit = sales.filter((s) => s.payType === "credit").reduce((a, s) => a + (s.total - s.paidNow), 0);
   const totalProfit = sales.reduce((a, s) => a + (s.items || []).reduce((b, it) => b + (costMap[it.productId] > 0 ? (it.price - costMap[it.productId]) * it.qty : 0), 0) - (s.items && s.items.length ? Number(s.discount) || 0 : 0), 0);
   const vouchers = scoped("vouchers").filter((v) => v.repId === rep.id && new Date(v.ts) >= fromDate && new Date(v.ts) <= toDate).sort((a, b) => new Date(a.ts) - new Date(b.ts));
@@ -5745,7 +5745,7 @@ function printRepReport(repId, fromStr, toStr) {
   const addDay = (k, f, v) => { if (!cashDays[k]) cashDays[k] = { sales: 0, coll: 0, buy: 0, hand: 0 }; cashDays[k][f] += v; };
   scoped("purchases").filter((p) => p.repId === rep.id && new Date(p.ts) >= fromDate && new Date(p.ts) <= toDate && repPurchaseCash(p) > 0).forEach((p) => addDay(dKey(p.ts), "buy", repPurchaseCash(p)));
   scoped("vouchers").filter((v) => v.repId === rep.id && new Date(v.ts) >= fromDate && new Date(v.ts) <= toDate && repSupPayCash(v) > 0).forEach((v) => addDay(dKey(v.ts), "buy", repSupPayCash(v)));
-  sales.filter((s) => s.payType === "cash" && !s.isReturn).forEach((s) => addDay(dKey(s.ts), "sales", Math.min(Number(s.paidNow) || 0, Math.max(0, Number(s.total) || 0))));
+  sales.filter((s) => saleCashPart(s) > 0).forEach((s) => addDay(dKey(s.ts), "sales", saleCashPart(s)));
   const cashVouchers = vouchers.filter((v) => v.partyKind !== "supplier" && v.method !== "check");
   cashVouchers.forEach((v) => addDay(dKey(v.ts), "coll", Number(v.cashAmount ?? v.amount) || 0));
   const hands = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === rep.id && h.status !== "rejected" && new Date(h.ts) >= fromDate && new Date(h.ts) <= toDate).sort((a, b) => new Date(a.ts) - new Date(b.ts));
@@ -7986,12 +7986,14 @@ function repPlaceLabel(rep) {
 // من 9/11/2026 (بعد ما تسكّرت الحسابات) كل شراء من مندوب بيتحسب من الكاش اللي معه
 function isRepCashBuy(p) { return !!(p && p.repId && (p.repCash || Date.parse(p.ts) >= 1794171600000)); }
 function repPurchaseCash(p) { return isRepCashBuy(p) && p.payType !== "check" ? Math.min(Number(p.paidNow) || 0, Math.max(0, Number(p.total) || 0)) : 0; }
+// الكاش اللي قبضه المندوب مع فاتورة البيع: نقدي كامل، أو دفعة على فاتورة آجل (مش شيك)
+function saleCashPart(s) { return s && !s.isReturn && !s.checkPayment ? Math.min(Number(s.paidNow) || 0, Math.max(0, Number(s.total) || 0)) : 0; }
 function repSupPayCash(v) { return v && v.repId && v.partyKind === "supplier" && v.method !== "check" && v.method !== "owncheck" ? (Number(v.amount) || 0) : 0; }
 function repCashPaidOut(repId) { return (DB.purchases || []).filter((p) => p.repId === repId).reduce((a, p) => a + repPurchaseCash(p), 0) + (DB.vouchers || []).filter((v) => v.repId === repId).reduce((a, v) => a + repSupPayCash(v), 0); }
 function repCashLedger(r) {
   const cashOf = (s) => Math.min(Number(s.paidNow) || 0, Math.max(0, Number(s.total) || 0));
   const items = [];
-  (DB.sales || []).filter((s) => s.repId === r.id && !s.isReturn && s.payType === "cash" && cashOf(s) > 0).forEach((s) => items.push({ ts: s.ts, kind: "بيع نقدي", who: (DB.customers.find((c) => c.id === s.customerId) || {}).name || "عميل نقدي", amount: cashOf(s), doc: docNo(s, "sales") }));
+  (DB.sales || []).filter((s) => s.repId === r.id && saleCashPart(s) > 0).forEach((s) => items.push({ ts: s.ts, kind: s.payType === "cash" ? "بيع نقدي" : "دفعة مع فاتورة آجل", who: (DB.customers.find((c) => c.id === s.customerId) || {}).name || "عميل نقدي", amount: saleCashPart(s), doc: docNo(s, "sales") }));
   (DB.vouchers || []).filter((v) => v.repId === r.id && v.partyKind === "customer" && v.method !== "check").forEach((v) => items.push({ ts: v.ts, kind: "قبض", who: (DB.customers.find((c) => c.id === v.partyId) || {}).name || "", amount: Number(v.cashAmount ?? v.amount) || 0 }));
   (DB.purchases || []).filter((p) => p.repId === r.id && repPurchaseCash(p) > 0).forEach((p) => items.push({ ts: p.ts, kind: "شراء نقدي", who: (DB.suppliers.find((x) => x.id === p.supplierId) || {}).name || "", amount: -repPurchaseCash(p), doc: docNo(p, "purchases") }));
   (DB.vouchers || []).filter((v) => v.repId === r.id && repSupPayCash(v) > 0).forEach((v) => items.push({ ts: v.ts, kind: "دفع لمورد", who: v.partyName || "", amount: -repSupPayCash(v), doc: docNo(v, "vouchers") }));
@@ -8025,7 +8027,7 @@ function repTodayStats(r) {
   const hands = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === r.id && isToday(h) && h.status !== "rejected");
   const salesTotal = sales.filter((s) => !s.isReturn).reduce((a, s) => a + (Number(s.total) || 0), 0);
   const returns = sales.filter((s) => s.isReturn).reduce((a, s) => a + Math.abs(Number(s.total) || 0), 0);
-  const cashSales = sales.filter((s) => s.payType === "cash").reduce((a, s) => a + Math.min(Number(s.paidNow) || 0, Math.max(0, Number(s.total) || 0)), 0);
+  const cashSales = sales.reduce((a, s) => a + saleCashPart(s), 0);
   const credit = sales.filter((s) => !s.isReturn).reduce((a, s) => a + ((Number(s.total) || 0) - (Number(s.paidNow) || 0)), 0);
   const collCash = vouchers.filter((v) => v.method !== "check").reduce((a, v) => a + (v.cashAmount ?? v.amount), 0);
   const collCheck = vouchers.filter((v) => v.method === "check").reduce((a, v) => a + v.amount, 0);
