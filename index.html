@@ -2863,12 +2863,20 @@ function repSubmitHandover(amount, max) {
 }
 function ownerReceiveFromRep(repId) {
   const r = (loadKey("reps", []) || []).find((x) => x.id === repId); if (!r) return;
+  const hs0 = loadKey("cashHandovers", []) || [];
+  const pend = hs0.filter((h) => h.repId === r.id && h.status === "pending");
+  if (pend.length) {
+    const p = pend[pend.length - 1];
+    if (confirm(`${r.name} باعتلك طلب تسليم بـ ${fmt(p.amount)} وبانتظار تأكيدك.\n\nإذا هاد نفس المبلغ اللي استلمته، اكبس «موافق» عشان نأكّد طلبه (وما ينحسب مرتين).\nإذا استلمت مبلغ ثاني غيره، اكبس «إلغاء».`)) { confirmHandover(p.id); return; }
+  }
   const L = repCashLedger(r);
   const v = prompt(`كم استلمت من ${r.name} بإيدك؟\n(معه حسب التطبيق: ${fmt(L.withHim)})`, String(Number(L.withHim.toFixed(2))));
   if (v == null) return;
   const amount = parseFloat(v);
   if (!(amount > 0)) { flash("اكتب مبلغ صحيح"); return; }
   if (amount > L.withHim + 0.001 && !confirm(`المبلغ أكبر من اللي معه حسب التطبيق (${fmt(L.withHim)}). متأكد؟`)) return;
+  const dup = hs0.find((h) => h.repId === r.id && h.status === "confirmed" && Math.abs(h.amount - amount) < 0.001 && Date.now() - new Date(h.ts).getTime() < 6 * 3600e3);
+  if (dup && !confirm(`⚠️ في تسليم بنفس المبلغ ${fmt(amount)} من ${r.name} انسجل الساعة ${new Date(dup.ts).toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" })}.\nمتأكد إنه هاد مبلغ جديد ومش نفسه؟`)) return;
   const hs = loadKey("cashHandovers", []) || [];
   const h = { id: uid(), repId: r.id, repName: r.name, amount, ts: new Date().toISOString(), status: "confirmed", confirmedAt: new Date().toISOString(), byOwner: true };
   hs.push(h); saveKey("cashHandovers", hs);
@@ -2881,6 +2889,8 @@ function confirmHandover(handoverId) {
   const handovers = loadKey("cashHandovers", []) || [];
   const h = handovers.find((x) => x.id === handoverId);
   if (!h || h.status !== "pending") return;
+  const dupC = handovers.find((x) => x.id !== h.id && x.repId === h.repId && x.status === "confirmed" && Math.abs(x.amount - h.amount) < 0.001 && Math.abs(new Date(x.ts) - new Date(h.ts)) < 6 * 3600e3);
+  if (dupC && !confirm(`⚠️ إنت سجّلت قبل استلام بنفس المبلغ ${fmt(h.amount)} من ${h.repName}.\nإذا هاد نفس المبلغ، اكبس «إلغاء» واكبس «رفض» على الطلب عشان ما ينحسب مرتين.\nمتأكد إنه مبلغ جديد؟`)) return;
   h.status = "confirmed"; h.confirmedAt = new Date().toISOString();
   saveKey("cashHandovers", handovers);
   addScoped("manualCash", { id: uid(), ts: new Date().toISOString(), type: "in", amount: h.amount, desc: `تسليم كاش من المندوب: ${h.repName}`, handoverId: h.id });
@@ -7487,7 +7497,7 @@ async function repFlush() {
       const payload = JSON.parse(JSON.stringify({ ...op, sent: null, repEmail: meta.email, repId: meta.repId, accountId: meta.accountId }));
       delete payload.sent;
       await col.doc(op.id).set(payload);
-      op.sent = true;
+      op.sent = true; op.sentAt = Date.now();
     }
   } catch (e) { console.error("rep flush failed", e); }
   repSetOutbox(out);
@@ -7499,7 +7509,11 @@ function repApplyView(v) {
   if (!meta || !v) return;
   const acc = meta.accountId;
   const merged = new Set(v.mergedOps || []);
-  const pending = repOutbox().filter((o) => !merged.has(o.id));
+  const inView = new Set();
+  Object.values(v.data || {}).forEach((arr) => (Array.isArray(arr) ? arr : []).forEach((x) => x && x.id && inView.add(x.id)));
+  (v.handovers || []).forEach((h) => h && h.id && inView.add(h.id));
+  const nowT = Date.now();
+  const pending = repOutbox().filter((o) => !merged.has(o.id) && !(o.sent && o.t === "add" && o.rec && inView.has(o.rec.id)) && !(o.sent && nowT - (o.sentAt || o.at || nowT) > 24 * 3600e3));
   repApplying = true;
   try {
     saveKey("accounts", [{ id: acc, name: v.accountName || "", owner: "" }]);
@@ -7690,7 +7704,7 @@ function buildRepView(rep, mergedOps) {
     settings: { shopName: settings.shopName || "", currency: settings.currency || "دينار", taxRate: settings.taxRate || 0, autoPrintSale: false },
     rep: { id: rep.id, name: rep.name, warehouseId: rep.warehouseId || "__main__", permissions: perms, customerIds: rep.customerIds || [] },
     data: { products, customers, suppliers, sales: sales.map(repStrip), vouchers: vouchers.map(repStrip), checks: [], purchases, warehouses, warehouseEntries },
-    handovers, seriesMax, mergedOps: (mergedOps || []).slice(-300),
+    handovers, seriesMax, mergedOps: Array.from(new Set([...(rep.mergedOps || []), ...(mergedOps || [])])).slice(-400),
     pendingEdits: Object.entries(rep.pendingEdits || {}).filter(([, e]) => e && e.rec).map(([id, e]) => ({ id, rec: repStrip(e.rec) })),
   };
 }
@@ -7800,6 +7814,12 @@ async function repMergeInbox(docs) {
     merged[op.repEmail] = merged[op.repEmail].slice(-300);
   }
   saveKey("repMerged", merged);
+  // نحفظ أرقام الحركات اللي انستلمت على سجل المندوب نفسه، عشان تتزامن بين كل أجهزة الإدارة
+  try {
+    const rs = loadKey("reps", []) || []; let ch = false;
+    rs.forEach((r) => { const m = merged[r.email]; if (!m || !m.length) return; const u = Array.from(new Set([...(r.mergedOps || []), ...m])).slice(-400); if (u.length !== (r.mergedOps || []).length) { r.mergedOps = u; ch = true; } });
+    if (ch) saveKey("reps", rs);
+  } catch (e) {}
   repMerging = false;
   if (touched.size) {
     touched.forEach((acc) => cloudMarkDirty(acc, Date.now()));
