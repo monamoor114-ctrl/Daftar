@@ -747,7 +747,7 @@ const I18N_EN = {
 "مستودع خارجي جديد": "New external warehouse",
 "اسم المستودع": "Warehouse name",
 "الجهة": "Party",
-"مثلاً: مستودع محمد الملك": "e.g. Mohammad's warehouse",
+"مثلاً: المستودع الرئيسي، سيارة التوزيع": "e.g. Main warehouse, delivery van",
 "ملاحظات": "Notes",
 "كشف جرد": "Stock count sheet",
 "حسب دفتر التطبيق بتاريخ الطباعة": "per the app records at print date",
@@ -1050,8 +1050,11 @@ function saveKey(key, value) {
     } catch (e) {}
   }
   try {
-    localStorage.setItem(LS_PREFIX + key, JSON.stringify(value));
+    const str = JSON.stringify(value);
+    localStorage.setItem(LS_PREFIX + key, str);
+    if (SYNC_STAMP_PENDING[key]) { SYNC_STAMP_CACHE[key] = { raw: str, map: SYNC_STAMP_PENDING[key] }; delete SYNC_STAMP_PENDING[key]; }
   } catch (e) {
+    delete SYNC_STAMP_PENDING[key]; delete SYNC_STAMP_CACHE[key];
     console.error("saveKey failed", key, e);
     cloudSyncBlocked = true;
     clearTimeout(cloudSyncTimer); cloudSyncTimer = null;
@@ -1218,30 +1221,51 @@ function stableStr(v) {
   return "{" + Object.keys(v).filter((k) => v[k] !== undefined).sort().map((k) => JSON.stringify(k) + ":" + stableStr(v[k])).join(",") + "}";
 }
 function syncRecJson(x) { const r = { ...x }; delete r._m; delete r.accountId; return stableStr(r); }
+// نفس syncRecJson بس أسرع: إذا السجل ما تغيّر (حتى لو انعدّل بمكانه بنكشفه بالمقارنة) بنرجّع النتيجة المحفوظة
+var SYNC_RJ_CACHE = new WeakMap();
+function syncRecJsonFast(x) {
+  const f = JSON.stringify(x);
+  const c = SYNC_RJ_CACHE.get(x);
+  if (c && c.f === f) return c.j;
+  const j = syncRecJson(x);
+  SYNC_RJ_CACHE.set(x, { f, j });
+  return j;
+}
 function syncLoadTombs() { try { return JSON.parse(localStorage.getItem(LS_PREFIX + "syncTombs") || "{}") || {}; } catch (e) { return {}; } }
 function syncSaveTombs(t) {
   const lim = Date.now() - TOMB_KEEP_MS;
   Object.keys(t).forEach((k) => { if (!t[k] || t[k].at < lim) delete t[k]; });
   try { localStorage.setItem(LS_PREFIX + "syncTombs", JSON.stringify(t)); } catch (e) {}
 }
+// كاش لآخر نسخة انحفظت من كل مفتاح (عشان ما نعيد قراءة وتحليل كل السجلات مع كل حفظ — كان يبطّئ الجوال)
+var SYNC_STAMP_CACHE = {};
+var SYNC_STAMP_PENDING = {};
 function syncStampRecords(key, next) {
-  let prev = [];
-  try { prev = JSON.parse(localStorage.getItem(LS_PREFIX + key) || "[]") || []; } catch (e) {}
-  const prevMap = new Map();
-  prev.forEach((x) => { if (x && x.id) prevMap.set(x.id, x); });
+  const raw = localStorage.getItem(LS_PREFIX + key) || "[]";
+  let prevMap;
+  const c = SYNC_STAMP_CACHE[key];
+  if (c && c.raw === raw) prevMap = c.map;
+  else {
+    let prev = [];
+    try { prev = JSON.parse(raw) || []; } catch (e) {}
+    prevMap = new Map();
+    prev.forEach((x) => { if (x && x.id) prevMap.set(x.id, { j: syncRecJson(x), m: x._m, acc: x.accountId }); });
+  }
   const now = Date.now();
-  const nextIds = new Set();
+  const nextMap = new Map();
   next.forEach((x) => {
     if (!x || !x.id) return;
-    nextIds.add(x.id);
+    const j = syncRecJsonFast(x);
     const p = prevMap.get(x.id);
     if (!p) { if (!x._m) x._m = now; }
-    else if (syncRecJson(p) !== syncRecJson(x)) x._m = now;
-    else if (p._m && !x._m) x._m = p._m;
+    else if (p.j !== j) x._m = now;
+    else if (p.m && !x._m) x._m = p.m;
+    nextMap.set(x.id, { j, m: x._m, acc: x.accountId });
   });
+  SYNC_STAMP_PENDING[key] = nextMap;
   let tombs = null;
-  prev.forEach((p) => {
-    if (p && p.id && !nextIds.has(p.id)) { tombs = tombs || syncLoadTombs(); tombs[key + "|" + p.id] = { at: now, acc: p.accountId || null }; }
+  prevMap.forEach((p, id) => {
+    if (!nextMap.has(id)) { tombs = tombs || syncLoadTombs(); tombs[key + "|" + id] = { at: now, acc: p.acc || null }; }
   });
   if (tombs) syncSaveTombs(tombs);
 }
@@ -2289,6 +2313,7 @@ function userTyping() {
   return false;
 }
 var bgRenderTimer = null;
+var lastMainSig = null;
 var bgRendering = false;
 function bgRender() {
   clearTimeout(bgRenderTimer);
@@ -2487,8 +2512,21 @@ function render() {
       : currentRepId() ? renderRepDashboard() : renderRepLogin();
   } else if (!state.activeAccountId) {
     app.innerHTML = renderAccountsHeader() + `<main class="app-main">${renderAccountsScreen()}</main>` + renderModal();
+    lastMainSig = null;
   } else {
-    app.innerHTML = renderHeader() + `<main class="app-main">${renderScreen()}</main>` + renderFloatingBar() + renderModal();
+    // فاتورة البيع/الشراء مفتوحة: بنرسم الفاتورة بس، والشاشة اللي تحتها بتضل زي ما هي (أسرع بكثير على الجوال)
+    const sig = state.activeAccountId + "|" + state.screen;
+    const cartOpen = state.modal && (state.modal.type === "saleCart" || state.modal.type === "purchaseCart");
+    const oldBox = cartOpen && !bgRendering && lastMainSig === sig ? app.querySelector(":scope > .modal-backdrop") : null;
+    if (oldBox) {
+      const tmp = document.createElement("div");
+      tmp.innerHTML = renderModal();
+      const fresh = tmp.firstElementChild;
+      if (fresh) oldBox.replaceWith(fresh); else oldBox.remove();
+    } else {
+      app.innerHTML = renderHeader() + `<main class="app-main">${renderScreen()}</main>` + renderFloatingBar() + renderModal();
+      lastMainSig = sig;
+    }
   }
   afterRenderHooks();
   if (keepTyped) restoreTypedFields(keepTyped);
@@ -3411,6 +3449,8 @@ function daftarHandleBack() {
   if (pr) { pr.remove(); return true; }
   if (state.modal) { closeModal(); return true; }
   if (state.activeAccountId && state.screen && state.screen !== "home") { goScreen("home"); return true; }
+  // بالشاشة الرئيسية: أول رجوع بيطلع تنبيه، والثاني خلال ثانيتين بيطلع من البرنامج
+  if (Date.now() - (window._lastBackTs || 0) > 2000) { window._lastBackTs = Date.now(); flash("اكبس رجوع مرة ثانية للخروج"); return true; }
   return false;
 }
 window.daftarHandleBack = daftarHandleBack;
@@ -6850,7 +6890,7 @@ function renderModal() {
 }
 function warehouseModalHtml(w) {
   return `<div class="modal-title-row"><h3>${w ? "تعديل مستودع" : "مستودع خارجي جديد"}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
-    <label class="field"><span class="lbl">اسم المستودع / الجهة</span><input id="wh-name" value="${esc(w ? w.name : "")}" placeholder="مثلاً: مستودع محمد الملك" autofocus /></label>
+    <label class="field"><span class="lbl">اسم المستودع / الجهة</span><input id="wh-name" value="${esc(w ? w.name : "")}" placeholder="مثلاً: المستودع الرئيسي، سيارة التوزيع" autofocus /></label>
     <label class="field"><span class="lbl">ملاحظات (اختياري)</span><input id="wh-notes" value="${esc(w ? w.notes || "" : "")}" /></label>
     <div class="row-flex">
       ${w ? `<button class="btn btn-stamp" onclick="deleteWarehouse('${w.id}')">حذف</button>` : ``}
