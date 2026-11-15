@@ -5975,10 +5975,10 @@ function printRepReport(repId, fromStr, toStr) {
   const handRows = hands.map((h) => `<div style="display:flex;justify-content:space-between;font-size:11px;padding:2px 0;page-break-inside:avoid;"><span>${fmtDate(h.ts)} ${new Date(h.ts).toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" })}${h.status === "pending" ? " (بانتظار التأكيد)" : ""}</span><span>${fmt(h.amount)}</span></div>`).join("") || `<div style="font-size:11px;color:#888;">ما سلّم إشي في هذه الفترة</div>`;
   const rows = sales.map((s) => {
     const cust = s.customerId ? (customers.find((c) => c.id === s.customerId) || {}).name : "نقدي";
-    const itemsLine = s.items.map((it) => `${esc(it.name)} ${fmt(it.qty)}×${fmt(it.price)}`).join("، ");
+    const itemsLine = printItemsTable(s.items, "price");
     return `<div style="padding:4px 0;border-bottom:1px dotted #ddd;page-break-inside:avoid;break-inside:avoid;">
       <div style="display:flex;justify-content:space-between;font-size:11.5px;font-weight:600;"><span>${fmtDate(s.ts)} — ${esc(cust)}</span><span>${fmt(s.total)}</span></div>
-      <div style="font-size:10px;color:#555;">${itemsLine}</div>
+      ${itemsLine}
     </div>`;
   }).join("") || `<div style="font-size:11px;color:#888;">لا توجد مبيعات في هذه الفترة</div>`;
   const voucherRows = vouchers.map((v) => `<div style="display:flex;justify-content:space-between;font-size:11px;padding:2px 0;page-break-inside:avoid;break-inside:avoid;"><span>${fmtDate(v.ts)} — ${esc(v.partyName)}${v.method === "check" ? " (شيك)" : ""}</span><span>${fmt(v.amount)}</span></div>`).join("") || `<div style="font-size:11px;color:#888;">لا توجد تحصيلات في هذه الفترة</div>`;
@@ -6824,13 +6824,13 @@ function printRangeReport(fromStr, toStr) {
     const party = isSale
       ? (t.customerId ? (customers.find((c) => c.id === t.customerId) || {}).name : "عميل نقدي")
       : (suppliers.find((s) => s.id === t.supplierId) || {}).name;
-    const itemsLine = t.items.map((it) => `${esc(it.name)} ${fmt(it.qty)}×${fmt(isSale ? it.price : it.cost)}`).join("، ");
+    const itemsLine = printItemsTable(t.items, isSale ? "price" : "cost");
     return `<div style="padding:4px 0;border-bottom:1px dotted #ddd;page-break-inside:avoid;break-inside:avoid;">
       <div style="display:flex;justify-content:space-between;font-size:11.5px;font-weight:600;">
         <span>${fmtDate(t.ts)} · ${t.isReturn ? "🔄 مرتجع" : "فاتورة"} <bdi>${docNo(t, isSale ? "sales" : "purchases")}</bdi> — ${esc(party || "—")}</span>
         <span>${fmt(t.total)}</span>
       </div>
-      <div style="font-size:10px;color:#555;">${itemsLine}</div>
+      ${itemsLine}
     </div>`;
   };
   const html = `${printHead(settings)}
@@ -8411,6 +8411,15 @@ if (REP_MODE) {
 /* ===================== سجل البطء (تشخيص) =====================
    أي عملية بتاخد أكثر من ثلث ثانية بتنسجل، وبتبين بالإعدادات «🐢 سجل البطء» — عشان نعرف وين بيعلق على الجوال */
 var PERF_LAST = "";
+// أصناف الفاتورة بالتقارير: كل صنف بسطر لحاله (الصنف | الكمية | السعر | المجموع) — أسهل لمتابعة الأسعار
+function printItemsTable(items, priceKey) {
+  if (!items || !items.length) return `<div style="font-size:10.5px;color:#888;">فاتورة سريعة — بدون أصناف</div>`;
+  const c = "padding:2px 3px;border-bottom:1px solid #eee;";
+  return `<table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:3px;">
+    <tr style="color:#777;font-size:9.5px;"><td style="${c}">الصنف</td><td style="${c}text-align:center;width:13%;">الكمية</td><td style="${c}text-align:center;width:17%;">السعر</td><td style="${c}text-align:left;width:19%;">المجموع</td></tr>
+    ${items.map((it) => { const pr = Number(it[priceKey]) || 0; const q = Number(it.qty) || 0; return `<tr><td style="${c}">${esc(it.name)}</td><td style="${c}text-align:center;font-family:monospace;">${fmt(q)}</td><td style="${c}text-align:center;font-family:monospace;font-weight:700;">${fmt(pr)}</td><td style="${c}text-align:left;font-family:monospace;">${fmt(q * pr)}</td></tr>`; }).join("")}
+  </table>`;
+}
 function perfLog() { try { return JSON.parse(localStorage.getItem(LS_PREFIX + "perfLog") || "[]") || []; } catch (e) { return []; } }
 function perfMark(name, ms) {
   if (ms < 350) return;
