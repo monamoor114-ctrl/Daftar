@@ -1279,7 +1279,8 @@ function syncMergeAccount(accountId, cloud, preferLocalOnTie) {
     if (!localTombs[k] || localTombs[k].at < at) localTombs[k] = { at, acc: accountId };
   });
   Object.keys(localTombs).forEach((k) => { if (localTombs[k].acc === accountId && !(Number(cloudTombs[k]) >= localTombs[k].at)) needPush = true; });
-  ACCOUNT_SCOPED_KEYS.forEach((k) => {
+  const keysToDo = cloud && Array.isArray(cloud._onlyKeys) ? ACCOUNT_SCOPED_KEYS.filter((k) => cloud._onlyKeys.includes(k)) : ACCOUNT_SCOPED_KEYS;
+  keysToDo.forEach((k) => {
     const all = loadKey(k, []) || [];
     const others = all.filter((x) => x.accountId !== accountId);
     const mine = all.filter((x) => x.accountId === accountId);
@@ -1361,6 +1362,115 @@ function cloudSnapshotAll() {
   snap._updatedAt = Date.now();
   return snap;
 }
+/* ===================== المزامنة v2: دفاتر صغيرة بدل دفتر واحد كبير =====================
+   كل حساب بالسحابة صار:
+   - data/{acc}            ← "الرأس": الإعدادات، المندوبين، التسليمات، علامات الحذف (صغير)
+   - data/{acc}~m0..m3     ← الأصناف والعملاء والموردين والمستودعات والموظفين (مقسومين على 4)
+   - data/{acc}~tYYYY-MMa  ← حركات أول نص الشهر (1-15)، و b لنصه الثاني (فواتير، سندات، مصاريف، شيكات...)
+   - data/{acc}~legacy     ← نسخة احتياطية من الدفتر القديم الكبير (بتنكتب مرة وحدة وما بتنمسح)
+   بنرفع بس الدفاتر اللي تغيّرت، وبنسمع بس على اللي تغيّر. الدمج نفسه (الأحدث بيربح + علامات الحذف) زي ما هو. */
+const CLOUD_MASTER_KEYS = ["products", "suppliers", "customers", "warehouses", "employees"];
+const CLOUD_TS_KEYS = ACCOUNT_SCOPED_KEYS.filter((k) => !CLOUD_MASTER_KEYS.includes(k));
+function cloudStrHash(str) { let h = 5381; for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0; return h >>> 0; }
+function cloudRecTime(r) {
+  const t = Date.parse((r && (r.ts || r.date)) || "");
+  if (isFinite(t)) return t;
+  const m = /^([0-9a-z]{8})/.exec(String((r && r.id) || ""));
+  if (m) { const v = parseInt(m[1], 36); if (v > 1.4e12 && v < 4.1e12) return v; }
+  return NaN;
+}
+function cloudPartOf(key, r) {
+  if (CLOUD_MASTER_KEYS.includes(key)) return "m" + (cloudStrHash(String(r.id)) % 4);
+  const t = cloudRecTime(r);
+  if (!isFinite(t)) return "tx";
+  const d = new Date(t);
+  return "t" + d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0") + (d.getUTCDate() <= 15 ? "a" : "b");
+}
+function cloudStripRec(x) { const r = { ...x }; delete r.accountId; return r; }
+// بصمة الدفتر: رقم كل سجل + وقت تعديله + طوله (بتتغيّر مع أي تعديل)
+function cloudPartSig(d) {
+  const keys = Object.keys(d || {}).filter((k) => Array.isArray(d[k]) && d[k].length).sort();
+  let s = "";
+  keys.forEach((k) => {
+    s += "|" + k + ":";
+    [...d[k]].sort((a, b) => (String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0))
+      .forEach((x) => { s += String(x.id) + "@" + (Number(x._m) || 0) + "@" + JSON.stringify(x).length + ","; });
+  });
+  return s ? cloudStrHash(s).toString(36) + "." + s.length.toString(36) : "0";
+}
+const CLOUD_EMPTY_SIG = "0";
+function cloudBuildParts(accountId) {
+  const parts = new Map();
+  ACCOUNT_SCOPED_KEYS.forEach((k) => {
+    (loadKey(k, []) || []).forEach((x) => {
+      if (!x || !x.id || x.accountId !== accountId) return;
+      const p = cloudPartOf(k, x);
+      if (!parts.has(p)) parts.set(p, { d: {} });
+      const d = parts.get(p).d;
+      (d[k] = d[k] || []).push(cloudStripRec(x));
+    });
+  });
+  parts.forEach((v) => { v.sig = cloudPartSig(v.d); });
+  return parts;
+}
+function cloudBuildMeta(accountId) {
+  const snap = cloudSnapshotAccount(accountId);
+  return { settings: snap.settings, reps: snap.reps, cashHandovers: snap.cashHandovers, _tombs: snap._tombs };
+}
+function cloudMetaSig(meta) { return cloudStrHash(stableStr({ settings: meta.settings || null, reps: meta.reps || [], cashHandovers: meta.cashHandovers || [], _tombs: meta._tombs || {} })).toString(36); }
+function cloudHasLegacyArrays(doc) { return !!doc && ACCOUNT_SCOPED_KEYS.some((k) => Array.isArray(doc[k]) && doc[k].length); }
+// البصمات اللي بنعرف إنها موجودة بالسحابة (عشان نرفع بس اللي اختلف)
+function cloudKnownGet(accountId) { const all = loadKey("cloudPartSig", {}) || {}; return all[accountId] || {}; }
+function cloudKnownSet(accountId, upd) {
+  const all = loadKey("cloudPartSig", {}) || {};
+  all[accountId] = { ...(all[accountId] || {}), ...upd };
+  try { localStorage.setItem(LS_PREFIX + "cloudPartSig", JSON.stringify(all)); } catch (e) {}
+}
+function cloudPartId(accountId, part) { return accountId + "~" + part; }
+// الدفاتر اللي محتاجة رفع: محلي مختلف عن آخر نسخة بنعرفها بالسحابة
+function cloudDirtyParts(accountId, parts, known) {
+  const out = [];
+  parts.forEach((v, p) => { if (v.sig !== known[p]) out.push(p); });
+  Object.keys(known).forEach((p) => { if (p !== "_meta" && !parts.has(p) && known[p] !== CLOUD_EMPTY_SIG) out.push(p); });
+  return out;
+}
+// بيجمع نسخة كاملة لحساب من السحابة (الرأس + كل الدفاتر + الدفتر القديم إذا لسا موجود فيه بيانات)
+async function cloudFetchAccountFull(rootRef, accountId) {
+  const col = rootRef.collection("data");
+  const [meta, q] = await Promise.all([col.doc(accountId).get(), col.where("acc", "==", accountId).get()]);
+  if (!meta.exists && q.empty) return null;
+  const md = meta.exists ? meta.data() : {};
+  const out = { settings: md.settings || null, reps: md.reps || [], cashHandovers: md.cashHandovers || [], _tombs: md._tombs || {} };
+  ACCOUNT_SCOPED_KEYS.forEach((k) => { out[k] = Array.isArray(md[k]) ? md[k].slice() : []; });
+  const sigs = {};
+  q.forEach((doc) => { const pd = doc.data() || {}; cloudAddPartTo(out, pd); if (pd.part) sigs[pd.part] = cloudPartSig(pd.d || {}); });
+  ACCOUNT_SCOPED_KEYS.forEach((k) => { out[k] = cloudDedupe(out[k]); });
+  out._partSigs = sigs;
+  if (meta.exists && !cloudHasLegacyArrays(md)) out._metaSig = cloudMetaSig(md);
+  return out;
+}
+function cloudAddPartTo(out, pd) { const d = (pd && pd.d) || {}; Object.keys(d).forEach((k) => { if (Array.isArray(d[k])) (out[k] = out[k] || []).push(...d[k]); }); }
+// إذا نفس السجل موجود مرتين (انتقل من دفتر لدفتر) بناخد الأحدث
+function cloudDedupe(arr) {
+  const m = new Map(); const extra = [];
+  (arr || []).forEach((x) => { if (!x || !x.id) { extra.push(x); return; } const o = m.get(x.id); if (!o || (Number(x._m) || 0) >= (Number(o._m) || 0)) m.set(x.id, x); });
+  return [...m.values(), ...extra];
+}
+var CLOUD_META_CACHE = {};
+var CLOUD_MIGRATE_ASKED = {};
+var CLOUD_PENDING_SIGS = {}; // اللي عم ننرفعه هلّق — لما يرجع من السحابة كصدى ما بندمجه مرة ثانية
+// بعد الدمج: إذا المحلي صار مختلف عن السحابة → جدول رفع (مع حماية من التكرار)
+function cloudPushIfDiffers(accountId) {
+  if (!accountId || accountId !== state.activeAccountId) return;
+  const known = cloudKnownGet(accountId);
+  const dirty = cloudDirtyParts(accountId, cloudBuildParts(accountId), known);
+  const metaDiff = cloudMetaSig(cloudBuildMeta(accountId)) !== known._meta;
+  if (!dirty.length && !metaDiff) return;
+  const now = Date.now();
+  syncEchoPushes = syncEchoPushes.filter((t) => now - t < 60000);
+  if (syncEchoPushes.length < 4) { syncEchoPushes.push(now); setTimeout(() => { cloudMarkDirty(accountId, Date.now()); cloudScheduleSync(); }, 0); }
+  else console.warn("sync echo push suppressed");
+}
 // وضع الإنقاذ: بعد أول تحديث للتطبيق، بنوقف المزامنة لحد ما يصدّر بيانات الجهاز (عشان ما تمسحها نسخة السحابة)
 var cloudRescueHold = false;
 /* ===== تتبّع التعديلات اللي لسه ما وصلت السحابة (محفوظ على الجهاز حتى لو التطبيق انسكّر) ===== */
@@ -1392,28 +1502,89 @@ function cloudFlushNow() {
 function cloudPushNow() {
   clearTimeout(cloudSyncTimer); cloudSyncTimer = null;
   if (cloudSyncBlocked || cloudRescueHold) { updateSyncBadge(); return; }
+  if (cloudPushInFlight) { cloudPushAgain = true; return; }
   const db = cloudInit();
   const linkId = cloudGetLinkId();
   if (!db || !linkId || !state.activeAccountId) { updateSyncBadge(); return; }
   const accId = state.activeAccountId;
   const dirtyBefore = cloudGetDirty();
   const rootRef = db.collection("daftar_accounts").doc(linkId);
-  const accountRef = rootRef.collection("data").doc(accId);
+  const col = rootRef.collection("data");
+  const metaRef = col.doc(accId);
   cloudPushInFlight = true;
   updateSyncBadge();
   let mergedSomething = false;
+  let wrote = 0;
   (async () => {
-    // قبل ما نرفع: بنقرأ نسخة السحابة وبندمجها (ممكن جهاز ثاني ضاف إشي) عشان ما نمسحه.
-    // إذا القراءة ما زبطت (نت ضعيف)، بنرفع عادي — الأجهزة الثانية بتدمج وبترجّع أي إشي ناقص.
+    // 1) الدفاتر اللي تغيّرت عندنا
+    let parts = cloudBuildParts(accId);
+    let known = cloudKnownGet(accId);
+    let dirty = cloudDirtyParts(accId, parts, known);
+    // 2) قبل ما نرفع: بنقرأ الرأس + نفس الدفاتر من السحابة وبندمجها (ممكن جهاز ثاني ضاف إشي) عشان ما نمسحه
+    let metaDoc = null, legacyBacked = !!known._legacyBacked;
     try {
-      const [rd, ad] = await Promise.all([rootRef.get(), accountRef.get()]);
+      const reads = await Promise.all([rootRef.get(), metaRef.get(), ...dirty.map((p) => col.doc(cloudPartId(accId, p)).get())]);
+      const [rd, md] = reads;
+      metaDoc = md.exists ? md.data() : null;
+      const pseudo = { settings: metaDoc ? metaDoc.settings : undefined, reps: (metaDoc && metaDoc.reps) || [], cashHandovers: (metaDoc && metaDoc.cashHandovers) || [], _tombs: (metaDoc && metaDoc._tombs) || {} };
+      ACCOUNT_SCOPED_KEYS.forEach((k) => { pseudo[k] = metaDoc && Array.isArray(metaDoc[k]) ? metaDoc[k].slice() : []; });
+      const readSigs = {};
+      reads.slice(2).forEach((doc, i) => { const p = dirty[i]; if (doc.exists) { const pd = doc.data(); cloudAddPartTo(pseudo, pd); readSigs[p] = cloudPartSig(pd.d || {}); } else readSigs[p] = known[p] === undefined ? undefined : CLOUD_EMPTY_SIG; });
+      ACCOUNT_SCOPED_KEYS.forEach((k) => { pseudo[k] = cloudDedupe(pseudo[k]); });
       cloudApplyingRemote = true;
       try {
         if (rd.exists) mergedSomething = syncMergeRoot(rd.data()) || mergedSomething;
-        if (ad.exists) { syncMergeAccount(accId, ad.data(), true); mergedSomething = true; }
+        if (metaDoc || Object.keys(readSigs).length) { syncMergeAccount(accId, pseudo, true); mergedSomething = true; }
       } finally { cloudApplyingRemote = false; }
+      const ks = {}; Object.keys(readSigs).forEach((p) => { if (readSigs[p] !== undefined) ks[p] = readSigs[p]; });
+      if (Object.keys(ks).length) cloudKnownSet(accId, ks);
+      if (known._legacyBacked && cloudHasLegacyArrays(metaDoc) && metaDoc._v !== 2) cloudKnownSet(accId, { _legacySeenAt: Date.now() });
+      if (!legacyBacked && cloudHasLegacyArrays(metaDoc)) {
+        const lg = await col.doc(cloudPartId(accId, "legacy")).get();
+        legacyBacked = lg.exists;
+      } else if (!cloudHasLegacyArrays(metaDoc)) legacyBacked = true;
     } catch (e) { console.warn("pre-push read skipped", e && e.code); }
-    await Promise.all([rootRef.set(cloudSnapshotRoot()), accountRef.set(cloudSnapshotAccount(accId))]);
+    // 3) بعد الدمج: بنحسب من جديد شو لازم ينرفع
+    parts = cloudBuildParts(accId);
+    known = cloudKnownGet(accId);
+    dirty = cloudDirtyParts(accId, parts, known);
+    const meta = cloudBuildMeta(accId);
+    const metaSig = cloudMetaSig(meta);
+    const legacyInMeta = cloudHasLegacyArrays(metaDoc);
+    const batch = db.batch();
+    const now = Date.now();
+    // الدفتر القديم الكبير: بنحفظ منه نسخة احتياطية مرة وحدة قبل ما نصغّره
+    if (legacyInMeta && !legacyBacked) { batch.set(col.doc(cloudPartId(accId, "legacy")), { ...metaDoc, _backupOf: accId, _backupAt: now }); wrote++; }
+    const written = {};
+    CLOUD_PENDING_SIGS[accId] = written;
+    dirty.forEach((p) => {
+      const v = parts.get(p);
+      batch.set(col.doc(cloudPartId(accId, p)), { acc: accId, part: p, d: v ? v.d : {}, _u: now });
+      written[p] = v ? v.sig : CLOUD_EMPTY_SIG; wrote++;
+    });
+    // جهاز بالنسخة القديمة لسا شغّال على نفس الحساب (آخر 7 أيام): بنكتب الدفتر الكبير كمان عشان ما يتخانقوا
+    const compat = known._legacySeenAt && now - known._legacySeenAt < 7 * 864e5;
+    if (compat) {
+      const full = cloudSnapshotAccount(accId);
+      batch.set(metaRef, { ...full, _v: 2, _compat: true, _updatedAt: now }); written._meta = metaSig; wrote++;
+    } else if (metaSig !== known._meta || legacyInMeta || !metaDoc || metaDoc._v !== 2) {
+      batch.set(metaRef, { _v: 2, ...meta, _updatedAt: now }); written._meta = metaSig; wrote++;
+    }
+    batch.set(rootRef, cloudSnapshotRoot()); wrote++;
+    try { await batch.commit(); }
+    catch (e) {
+      // إذا الدفتر القديم كبير لدرجة إن نسخته الاحتياطية ما بتنكتب، بنكمل بدونها (الرفع أهم)
+      const big = e && (e.code === "invalid-argument" || /size|too large|too big/i.test(e.message || ""));
+      if (!(big && legacyInMeta && !legacyBacked)) throw e;
+      console.warn("legacy backup skipped (too big)");
+      const b2 = db.batch();
+      dirty.forEach((p) => { const v = parts.get(p); b2.set(col.doc(cloudPartId(accId, p)), { acc: accId, part: p, d: v ? v.d : {}, _u: now }); });
+      if (written._meta) b2.set(metaRef, { _v: 2, ...meta, _updatedAt: now });
+      b2.set(rootRef, cloudSnapshotRoot());
+      await b2.commit();
+    }
+    written._legacyBacked = true;
+    cloudKnownSet(accId, written);
   })()
     .then(() => {
       if (mergedSomething) { bootDB(); bgRender(); }
@@ -1431,11 +1602,17 @@ function cloudPushNow() {
       const quota = e && (e.code === "resource-exhausted" || /quota/i.test(e.message || ""));
       bgFlash(quota ? "⚠️ وصلنا الحد اليومي المجاني للمزامنة — بياناتك محفوظة على الجهاز وبترتفع لحالها بكرة الصبح"
         : sizeIssue
-        ? "❌ فشلت المزامنة! حجم البيانات كبير جدًا (غالبًا بسبب الصور القديمة) — لازم نصغّرها"
+        ? "❌ فشلت المزامنة! حجم البيانات كبير جدًا — احكي مع الدعم"
         : "❌ فشلت المزامنة مع السحابة — تأكد من الاتصال بالإنترنت" + (e && e.code ? ` (${e.code})` : ""));
     })
-    .finally(() => { cloudPushInFlight = false; updateSyncBadge(); });
+    .finally(() => {
+      delete CLOUD_PENDING_SIGS[accId];
+      cloudPushInFlight = false; updateSyncBadge();
+      if (cloudPushAgain) { cloudPushAgain = false; cloudScheduleSync(); }
+      else if (!cloudPushFailed && cloudHasUnsynced(accId)) cloudScheduleSync();
+    });
 }
+var cloudPushAgain = false;
 let cloudPushFailed = false;
 /* ===== علامة حالة المزامنة بالشريط العلوي ===== */
 function syncBadgeHtml() {
@@ -1500,6 +1677,7 @@ function cloudApplySnapshot(kind, accountId, data) {
       syncMergeRoot(data);
     } else if (kind === "account" && !cloudReplaceMode) {
       needPush = syncMergeAccount(accountId, data, cloudHasUnsynced(accountId));
+      if (data._v2) needPush = false; // v2: بنقرر الرفع بمقارنة البصمات تحت
     } else if (kind === "root") {
       if (data.accounts !== undefined) localStorage.setItem(LS_PREFIX + "accounts", JSON.stringify(data.accounts));
       if (data.cloudOwnerPin !== undefined) localStorage.setItem(LS_PREFIX + "cloudOwnerPin", JSON.stringify(data.cloudOwnerPin));
@@ -1533,7 +1711,12 @@ function cloudApplySnapshot(kind, accountId, data) {
         restoredAny = true;
       }
     });
+    if (kind === "account" && (data._partSigs || data._metaSig)) {
+      const ks = { ...(data._partSigs || {}) }; if (data._metaSig) ks._meta = data._metaSig;
+      cloudKnownSet(accountId, ks);
+    }
     bootDB();
+    if (kind === "account" && data._v2 && !cloudReplaceMode) { try { cloudPushIfDiffers(accountId); } catch (e) { console.warn(e); } }
     if (restoredAny || needPush) {
       // حماية: ما بنعيد الرفع أكثر من 4 مرات بالدقيقة بسبب وصول نسخة من السحابة
       const now = Date.now();
@@ -1577,9 +1760,49 @@ function cloudListenToAccount(accountId) {
   const linkId = cloudGetLinkId();
   if (!db || !linkId) return;
   if (cloudAccountUnsub) cloudAccountUnsub();
-  cloudAccountUnsub = db.collection("daftar_accounts").doc(linkId).collection("data").doc(accountId).onSnapshot((doc) => {
-    if (doc.exists) { cloudApplySnapshot("account", accountId, doc.data()); scheduleDocNumbers(); }
+  const col = db.collection("daftar_accounts").doc(linkId).collection("data");
+  // الرأس (إعدادات، مندوبين، علامات حذف) — وإذا جهاز قديم كتب الدفتر الكبير، بندمجه زي قبل
+  const u1 = col.doc(accountId).onSnapshot((doc) => {
+    if (!doc.exists) return;
+    const md = doc.data();
+    CLOUD_META_CACHE[accountId] = md;
+    if (cloudHasLegacyArrays(md)) {
+      if (md._compat) { // كتبناها احنا (وضع التوافق): بنطبّقها عادي بس بدون ترحيل
+        const ms0 = cloudMetaSig(md); const pend0 = CLOUD_PENDING_SIGS[accountId] || {};
+        if (ms0 === cloudKnownGet(accountId)._meta || ms0 === pend0._meta) return;
+        cloudApplySnapshot("account", accountId, md); scheduleDocNumbers(); return;
+      }
+      if (cloudKnownGet(accountId)._legacyBacked) cloudKnownSet(accountId, { _legacySeenAt: Date.now() });
+      cloudApplySnapshot("account", accountId, md); scheduleDocNumbers();
+      // لسا بالطريقة القديمة: بنحوّله للدفاتر الصغيرة (مرة وحدة)
+      if (!CLOUD_MIGRATE_ASKED[accountId] && accountId === state.activeAccountId) { CLOUD_MIGRATE_ASKED[accountId] = true; setTimeout(() => { cloudMarkDirty(accountId, Date.now()); cloudScheduleSync(); }, 0); }
+      return;
+    }
+    const ms = cloudMetaSig(md);
+    const pend = CLOUD_PENDING_SIGS[accountId] || {};
+    if (ms === cloudKnownGet(accountId)._meta || ms === pend._meta) return; // صدى رفعنا
+    // علامات الحذف الجديدة: بنطبّقها بس على الأنواع اللي إلها علاقة
+    const lt = syncLoadTombs(); const keys = new Set();
+    Object.keys(md._tombs || {}).forEach((k) => { const at = Number(md._tombs[k]) || 0; if (!lt[k] || lt[k].at < at) keys.add(k.split("|")[0]); });
+    cloudApplySnapshot("account", accountId, { _v2: true, _onlyKeys: [...keys], settings: md.settings, reps: md.reps || [], cashHandovers: md.cashHandovers || [], _tombs: md._tombs || {}, _metaSig: ms });
   }, (e) => console.error("cloud listen failed (account)", e));
+  // الدفاتر الصغيرة: بيوصلنا بس اللي تغيّر
+  const u2 = col.where("acc", "==", accountId).onSnapshot((snap) => {
+    const known = cloudKnownGet(accountId); const pend = CLOUD_PENDING_SIGS[accountId] || {};
+    const changed = snap.docChanges().filter((c) => c.type !== "removed").map((c) => c.doc.data())
+      .filter((pd) => { if (!pd || !pd.part) return false; const sg = cloudPartSig(pd.d || {}); return sg !== known[pd.part] && sg !== pend[pd.part]; });
+    if (!changed.length) return;
+    const md = CLOUD_META_CACHE[accountId] || {};
+    const pseudo = { _v2: true, reps: md.reps || [], cashHandovers: md.cashHandovers || [], _tombs: md._tombs || {}, _partSigs: {} };
+    if (md.settings) pseudo.settings = md.settings;
+    ACCOUNT_SCOPED_KEYS.forEach((k) => { pseudo[k] = []; });
+    changed.forEach((pd) => { cloudAddPartTo(pseudo, pd); if (pd.part) pseudo._partSigs[pd.part] = cloudPartSig(pd.d || {}); });
+    ACCOUNT_SCOPED_KEYS.forEach((k) => { pseudo[k] = cloudDedupe(pseudo[k]); });
+    pseudo._onlyKeys = ACCOUNT_SCOPED_KEYS.filter((k) => pseudo[k].length);
+    cloudApplySnapshot("account", accountId, pseudo);
+    scheduleDocNumbers();
+  }, (e) => console.error("cloud listen failed (parts)", e));
+  cloudAccountUnsub = () => { try { u1(); } catch (e) {} try { u2(); } catch (e) {} };
 }
 let cloudAccountUnsub = null;
 function cloudGetOwnerPin() { return loadKey("cloudOwnerPin", null); }
@@ -1624,8 +1847,8 @@ async function cloudTryLogin(linkId, pin) {
       const accounts = rootData.accounts || [];
       const targetId = accounts.length ? accounts[0].id : null;
       if (targetId) {
-        const accDoc = await rootRef.collection("data").doc(targetId).get();
-        if (accDoc.exists) cloudApplySnapshot("account", targetId, accDoc.data());
+        const full = await cloudFetchAccountFull(rootRef, targetId);
+        if (full) cloudApplySnapshot("account", targetId, full);
         state.activeAccountId = targetId;
       }
       cloudStartListening();
@@ -1634,9 +1857,8 @@ async function cloudTryLogin(linkId, pin) {
     // مش صاحب الشركة -> دور على مندوب بنفس الرقم السري في أي حساب (لازم نفحص كل حساب لحاله)
     const accounts = rootData.accounts || [];
     for (const acc of accounts) {
-      const accDoc = await rootRef.collection("data").doc(acc.id).get();
-      if (!accDoc.exists) continue;
-      const accData = accDoc.data();
+      const accData = await cloudFetchAccountFull(rootRef, acc.id);
+      if (!accData) continue;
       const rep = (accData.reps || []).find((r) => r.pin === pin);
       if (rep) {
         cloudSetLinkId(linkId);
@@ -1866,9 +2088,10 @@ async function cloudPullCompany(linkId) {
     if (doc.exists) {
       const rootData = doc.data();
       cloudApplySnapshot("root", null, rootData);
+      try { localStorage.removeItem(LS_PREFIX + "cloudPartSig"); } catch (e) {}
       for (const acc of (rootData.accounts || [])) {
-        const accDoc = await rootRef.collection("data").doc(acc.id).get();
-        if (accDoc.exists) cloudApplySnapshot("account", acc.id, accDoc.data());
+        const full = await cloudFetchAccountFull(rootRef, acc.id);
+        if (full) cloudApplySnapshot("account", acc.id, full);
       }
     }
   } finally { cloudReplaceMode = false; }
@@ -1981,9 +2204,10 @@ async function cloudLinkExistingAsOwner() {
     cloudSetDirty({});
     localLastModifiedAt = 0;
     cloudApplySnapshot("root", null, rootData);
+    try { localStorage.removeItem(LS_PREFIX + "cloudPartSig"); } catch (e) {}
     for (const acc of (rootData.accounts || [])) {
-      const accDoc = await rootRef.collection("data").doc(acc.id).get();
-      if (accDoc.exists) cloudApplySnapshot("account", acc.id, accDoc.data());
+      const full = await cloudFetchAccountFull(rootRef, acc.id);
+      if (full) cloudApplySnapshot("account", acc.id, full);
     }
     cloudStartListening();
     state.activeAccountId = null; state.screen = "home"; state._linkCode = ""; state._linkPin = "";
@@ -2526,6 +2750,7 @@ function render() {
     } else {
       app.innerHTML = renderHeader() + `<main class="app-main">${renderScreen()}</main>` + renderFloatingBar() + renderModal();
       lastMainSig = sig;
+      try { const o = onbGet(); if (o && o.newUser && !o.welcome && state.screen === "home" && !state.modal) app.insertAdjacentHTML("beforeend", onbWelcomeHtml()); } catch (e) {}
     }
   }
   afterRenderHooks();
@@ -3092,6 +3317,11 @@ function renderHeader() {
 
 /* ===================== SCREEN DISPATCH ===================== */
 function renderScreen() {
+  try { onbEnsure(); } catch (e) {}
+  if (state.screen === "home") return onbStepsHtml() + renderHome();
+  return onbTipHtml(state.screen === "suppliers" ? "suppliers" : state.screen) + renderScreenInner();
+}
+function renderScreenInner() {
   switch (state.screen) {
     case "home": return renderHome();
     case "sales": return renderSales();
@@ -4853,13 +5083,14 @@ function addVoucher(kind, partyId) {
     if (ids.length === 0) { flash("اختر شيك واحد على الأقل للتجيير"); return; }
     const label = `مجيّر لـ: ${party ? party.name : ""}${desc ? " — " + desc : ""}`;
     let total = 0;
+    const vid = uid();
     persistScoped("checks", scoped("checks").map((c) => {
       if (!ids.includes(c.id)) return c;
       total += c.amount;
-      return { ...c, status: "endorsed", desc: label + (c.desc ? " (من: " + c.desc + ")" : "") };
+      return { ...c, status: "endorsed", endorseVoucherId: vid, preEndorseDesc: c.desc || "", desc: label + (c.desc ? " (من: " + c.desc + ")" : "") };
     }));
     const amount = total;
-    const v = { id: uid(), ts: new Date().toISOString(), partyKind: kind, partyId, partyName: party ? party.name : "", amount, desc, method: "check", checksCount: ids.length };
+    const v = { id: vid, ts: new Date().toISOString(), partyKind: kind, partyId, partyName: party ? party.name : "", amount, desc, method: "check", checksCount: ids.length };
     addScoped("vouchers", v);
     flash(`تم تجيير ${ids.length} شيك للمورد`);
     state._voucherMethod = "cash"; state._selectedEndorseChecks = [];
@@ -4980,8 +5211,35 @@ function sumSelectedEndorseChecks() {
 }
 function deleteVoucher(id) {
   if (REP_MODE) { flash("الحذف من الإدارة بس — احكي معهم"); return; }
-  if (!confirm("متأكد إنك بدك تمسح السند هاد؟ ما في رجعة بعد الحذف.")) return;
+  const endorsed = scoped("checks").filter((c) => c.endorseVoucherId === id && c.status === "endorsed");
+  const msg = endorsed.length
+    ? `متأكد إنك بدك تمسح السند هاد؟\n\nالشيكات المجيّرة فيه (${endorsed.length}) بترجع لقائمة الشيكات اللي بإيدك.`
+    : "متأكد إنك بدك تمسح السند هاد؟ ما في رجعة بعد الحذف.";
+  if (!confirm(msg)) return;
+  if (endorsed.length) {
+    persistScoped("checks", scoped("checks").map((c) => (c.endorseVoucherId === id && c.status === "endorsed" ? unEndorsedCheck(c) : c)));
+  }
   persistScoped("vouchers", scoped("vouchers").filter((v) => v.id !== id));
+  if (endorsed.length) flash(`↩️ رجعت ${endorsed.length} شيك لقائمة الشيكات`);
+  render();
+}
+// يرجّع الشيك المجيّر لحالته قبل التجيير (معلّق وبإيدك)
+function unEndorsedCheck(c) {
+  let d = c.preEndorseDesc;
+  if (d == null) { const m = String(c.desc || "").match(/\(من: ([\s\S]*)\)\s*$/); d = m ? m[1] : String(c.desc || "").replace(/^مجيّر لـ: [^(]*/, "").trim(); }
+  const r = { ...c, status: "pending", desc: d };
+  delete r.endorseVoucherId; delete r.preEndorseDesc;
+  return r;
+}
+function undoEndorse(id) {
+  const c = scoped("checks").find((x) => x.id === id); if (!c || c.status !== "endorsed") return;
+  if (c.endorseVoucherId && scoped("vouchers").some((v) => v.id === c.endorseVoucherId)) {
+    alert("سند التجيير لهاد الشيك لسا موجود عند المورد.\n\nاحذف السند من صفحة المورد، والشيكات اللي فيه بترجع لحالها.");
+    return;
+  }
+  if (!confirm(`إلغاء تجيير الشيك؟\n\n${fmt(c.amount)} — بيرجع لقائمة الشيكات اللي بإيدك (قيد التحصيل).\n\nتأكد إن ما في سند تجيير لهاد الشيك لسا مسجّل على المورد.`)) return;
+  persistScoped("checks", scoped("checks").map((x) => (x.id === id ? unEndorsedCheck(x) : x)));
+  flash("↩️ رجع الشيك لقائمة الشيكات");
   render();
 }
 
@@ -5215,11 +5473,12 @@ function renderCashbox() {
   <div class="tabbar">
     ${[["all", "الكل"], ["pending", "قيد التحصيل"], ["collected", "تم التحصيل"], ["endorsed", "مجيّر"]].map(([id, label]) => `<button class="tab-pill ${(state._checksFilter || "all") === id ? "active" : ""}" onclick="state._checksFilter='${id}';render();">${label}</button>`).join("")}
   </div>`;
+  html += `<div style="text-align:left;margin:6px 0 8px;"><button class="btn btn-ghost" style="font-size:12px;padding:5px 12px;" onclick="toggleChkSort()">⇅ ${chkSortDir() === "desc" ? "الأبعد تاريخاً أولاً" : "الأقرب تاريخاً أولاً"}</button></div>`;
   const filterVal = state._checksFilter || "all";
   const filteredChecks = filterVal === "all" ? checks : checks.filter((c) => c.status === filterVal);
   if (filteredChecks.length === 0) html += emptyState("لا توجد شيكات في هذا التصنيف", true);
   else {
-    const sorted = [...filteredChecks].sort((a, b) => new Date(a.dueDate || a.ts) - new Date(b.dueDate || b.ts));
+    const sorted = [...filteredChecks].sort(chkSortFn());
     html += `<div>` + sorted.map((c) => {
       const statusLabel = c.status === "pending" ? "قيد التحصيل" : c.status === "collected" ? "تم التحصيل ✓" : "مجيّر";
       const statusColor = c.status === "pending" ? "var(--gold)" : c.status === "collected" ? "var(--green)" : "var(--inkSoft)";
@@ -5236,6 +5495,7 @@ function renderCashbox() {
           <span class="chip mono" style="background:${statusColor}22;color:${statusColor};">${statusLabel}</span>
           <div class="row-flex">
             ${c.status === "pending" ? `<button class="btn btn-green" style="padding:5px 10px;font-size:11px;" onclick="openCollectModal('${c.id}')">تحصيل</button>` : ""}
+            ${c.status === "endorsed" ? `<button class="btn btn-ghost" style="padding:5px 10px;font-size:11px;" onclick="undoEndorse('${c.id}')">↩️ إلغاء التجيير</button>` : ""}
             <button class="icon-btn" style="color:var(--stamp);" onclick="deleteCheck('${c.id}')">🗑</button>
           </div>
         </div>
@@ -5291,6 +5551,10 @@ function saveCheck() {
   flash("تم تسجيل الشيك");
   render();
 }
+// ترتيب الشيكات حسب تاريخ الاستحقاق: الأقرب أولاً (افتراضي) أو الأبعد أولاً — بينحفظ على الجهاز
+function chkSortDir() { try { return localStorage.getItem(LS_PREFIX + "chkSort") === "desc" ? "desc" : "asc"; } catch (e) { return "asc"; } }
+function toggleChkSort() { try { localStorage.setItem(LS_PREFIX + "chkSort", chkSortDir() === "desc" ? "asc" : "desc"); } catch (e) {} render(); }
+function chkSortFn() { const k = chkSortDir() === "desc" ? -1 : 1; return (a, b) => k * (new Date(a.dueDate || a.ts) - new Date(b.dueDate || b.ts)); }
 function openCollectModal(id) { state.modal = { type: "collectCheck", id }; render(); }
 function submitCollect(id) {
   const c = scoped("checks").find((x) => x.id === id);
@@ -6734,7 +6998,7 @@ function printCashStatement() {
 function printChecksStatement() {
   const settings = currentSettings();
   const checks = scoped("checks");
-  const byDate = (a, b) => new Date(a.dueDate || a.ts) - new Date(b.dueDate || b.ts);
+  const byDate = chkSortFn();
   const pending = checks.filter((c) => c.status === "pending").sort(byDate);
   const collected = checks.filter((c) => c.status === "collected").sort(byDate);
   const endorsed = checks.filter((c) => c.status === "endorsed").sort(byDate);
@@ -6876,8 +7140,8 @@ function renderModal() {
   else if (m.type === "newItem") inner = newItemModalHtml(m.name, m.barcode, m);
   else if (m.type === "importText") inner = importTextModalHtml();
   else if (m.type === "collectCheck") inner = collectModalHtml(m.id);
-  else if (m.type === "saleCart") inner = renderSaleCartSheet();
-  else if (m.type === "purchaseCart") inner = renderPurchaseCartSheet();
+  else if (m.type === "saleCart") inner = onbTipHtml("saleCart") + renderSaleCartSheet();
+  else if (m.type === "purchaseCart") inner = onbTipHtml("purchaseCart") + renderPurchaseCartSheet();
   else if (m.type === "warehouse") inner = warehouseModalHtml(m.w);
   else if (m.type === "warehouseDetail") inner = warehouseDetailHtml(m.id);
   else if (m.type === "employee") inner = employeeModalHtml(m.emp);
@@ -7791,10 +8055,35 @@ async function repModeStart(u) {
   const m2 = repMeta();
   if (!state.repStatus || state.repStatus === "verify") state.repStatus = "waiting";
   if (repUnsub) repUnsub();
-  repUnsub = db.collection("daftar_accounts").doc(m2.linkId).collection("repViews").doc(m2.email).onSnapshot((doc) => {
-    if (doc.exists) { state.repStatus = "ok"; repApplyView(doc.data()); }
+  const viewRef = db.collection("daftar_accounts").doc(m2.linkId).collection("repViews").doc(m2.email);
+  const parts = {}; let head = null; let partsReady = false; let partsUnsub = null; let applyT = null;
+  // بنجمّع الشاشة: الرأس + الدفاتر الصغيرة اللي بيذكرها
+  const tryApply = () => {
+    clearTimeout(applyT);
+    applyT = setTimeout(() => {
+      if (!head) return;
+      if (head.v !== 2 || !head.parts) { state.repStatus = "ok"; repApplyView(head); return; }
+      if (!partsReady) return;
+      const names = Object.keys(head.parts);
+      if (names.some((p) => !parts[p])) return; // لسا في دفتر ما وصل
+      const data = {};
+      names.forEach((p) => { const d = parts[p] || {}; Object.keys(d).forEach((k) => { (data[k] = data[k] || []).push(...(d[k] || [])); }); });
+      state.repStatus = "ok";
+      repApplyView({ ...head, data });
+    }, 250);
+  };
+  const startParts = () => {
+    if (partsUnsub) return;
+    partsUnsub = viewRef.collection("parts").onSnapshot((snap) => {
+      snap.docChanges().forEach((c) => { if (c.type === "removed") delete parts[c.doc.id]; else parts[c.doc.id] = (c.doc.data() || {}).d || {}; });
+      partsReady = true; tryApply();
+    }, (e) => { console.error("rep parts listen failed", e); });
+  };
+  const u1 = viewRef.onSnapshot((doc) => {
+    if (doc.exists) { head = doc.data(); if (head.v === 2 && head.parts) startParts(); tryApply(); }
     else { state.repStatus = "waiting"; render(); }
   }, (e) => { console.error("rep view listen failed", e); state.repStatus = (loadKey("reps", []) || []).length ? "ok" : "error"; render(); });
+  repUnsub = () => { try { u1(); } catch (e) {} try { partsUnsub && partsUnsub(); } catch (e) {} };
   repFlush();
   render();
 }
@@ -7955,6 +8244,24 @@ function repReconcileHandovers() {
   if (changed) saveKey("cashHandovers", hs);
   return changed;
 }
+/* ===== نشر شاشة المندوب: مقسومة لدفاتر صغيرة (repViews/{email}/parts/*) — بنرفع بس اللي تغيّر =====
+   إذا قواعد الحماية لسا ما فيها parts، بنرجع للطريقة القديمة (كل إشي بملف واحد) لحالنا. */
+function repViewSplit(view) {
+  const parts = {};
+  const add = (p, k, x) => { const o = (parts[p] = parts[p] || {}); (o[k] = o[k] || []).push(x); };
+  const d = view.data || {};
+  (d.products || []).forEach((x) => add("p" + (cloudStrHash(String(x.id)) % 4), "products", x));
+  (d.customers || []).forEach((x) => add("c" + (cloudStrHash(String(x.id)) % 4), "customers", x));
+  (d.suppliers || []).forEach((x) => add("s", "suppliers", x));
+  (d.warehouses || []).forEach((x) => add("w", "warehouses", x));
+  (d.warehouseEntries || []).forEach((x) => add("w", "warehouseEntries", x));
+  (d.checks || []).forEach((x) => add("k", "checks", x));
+  [["sales", "S"], ["vouchers", "V"], ["purchases", "U"]].forEach(([k, L]) => (d[k] || []).forEach((x) => add(L + cloudPartOf("sales", x).slice(1), k, x)));
+  return parts;
+}
+function repPubKnown() { return loadKey("repPubSig", {}) || {}; }
+function repPubKnownSet(email, v) { const all = repPubKnown(); if (v == null) delete all[email]; else all[email] = v; try { localStorage.setItem(LS_PREFIX + "repPubSig", JSON.stringify(all)); } catch (e) {} }
+var repPartsDenied = false;
 async function publishRepViews() {
   if (REP_MODE || cloudRescueHold) return;
   try { repReconcileHandovers(); } catch (e) {}
@@ -7968,12 +8275,42 @@ async function publishRepViews() {
     const saveAcc = state.activeAccountId;
     let view;
     try { state.activeAccountId = rep.accountId; view = buildRepView(rep, merged[rep.email] || []); } finally { state.activeAccountId = saveAcc; }
-    const str = JSON.stringify(view);
-    const h = repHash(str);
-    if (repPublishedHash[rep.email] === h) continue;
+    const viewRef = db.collection("daftar_accounts").doc(linkId).collection("repViews").doc(rep.email);
+    const idxData = { linkId, accountId: rep.accountId, repId: rep.id, name: rep.name, ownerUid: u.uid };
+    const idxKey = JSON.stringify(idxData);
     try {
-      await db.collection("daftar_repIndex").doc(rep.email).set({ linkId, accountId: rep.accountId, repId: rep.id, name: rep.name, ownerUid: u.uid, at: Date.now() });
-      await db.collection("daftar_accounts").doc(linkId).collection("repViews").doc(rep.email).set({ ...JSON.parse(str), _updatedAt: Date.now() });
+      if (!repPartsDenied) {
+        const parts = JSON.parse(JSON.stringify(repViewSplit(view)));
+        const sigs = {}; Object.keys(parts).forEach((p) => { sigs[p] = repHash(JSON.stringify(parts[p])); });
+        const head = JSON.parse(JSON.stringify({ ...view, data: null, v: 2, parts: sigs }));
+        const hh = repHash(JSON.stringify(head));
+        const known = repPubKnown()[rep.email] || {};
+        const changed = Object.keys(sigs).filter((p) => (known.parts || {})[p] !== sigs[p]);
+        const removed = Object.keys(known.parts || {}).filter((p) => !(p in sigs));
+        if (known.head === hh && known.idx === idxKey && !changed.length && !removed.length) continue;
+        const batch = db.batch();
+        if (known.idx !== idxKey) batch.set(db.collection("daftar_repIndex").doc(rep.email), { ...idxData, at: Date.now() });
+        changed.forEach((p) => batch.set(viewRef.collection("parts").doc(p), { d: parts[p], _u: Date.now() }));
+        removed.forEach((p) => batch.delete(viewRef.collection("parts").doc(p)));
+        batch.set(viewRef, { ...head, _updatedAt: Date.now() });
+        try { await batch.commit(); }
+        catch (e) {
+          if (e && e.code === "permission-denied") { repPartsDenied = true; repPubKnownSet(rep.email, null); }
+          else { repPubKnownSet(rep.email, null); throw e; }
+        }
+        if (!repPartsDenied) {
+          repPubKnownSet(rep.email, { head: hh, parts: sigs, idx: idxKey });
+          repPublishedHash[rep.email] = null;
+          if (state.repRulesMissing) { state.repRulesMissing = false; render(); }
+          continue;
+        }
+      }
+      // الطريقة القديمة (قواعد الحماية لسا قديمة): كل الشاشة بملف واحد
+      const str = JSON.stringify(view);
+      const h = repHash(str);
+      if (repPublishedHash[rep.email] === h) continue;
+      await db.collection("daftar_repIndex").doc(rep.email).set({ ...idxData, at: Date.now() });
+      await viewRef.set({ ...JSON.parse(str), _updatedAt: Date.now() });
       repPublishedHash[rep.email] = h;
       if (state.repRulesMissing) { state.repRulesMissing = false; render(); }
     } catch (e) {
@@ -8407,6 +8744,95 @@ if (REP_MODE) {
   window.addEventListener("online", () => repFlush());
   setInterval(() => repFlush(), 30000);
 }
+
+
+/* ===================== التعريف بالبرنامج للمستخدم الجديد =====================
+   1) شاشات ترحيب أول مرة  2) كرت «خطواتك الأولى» بالرئيسية  3) تلميح لمرة وحدة بكل شاشة.
+   بتطلع بس للمستخدم الجديد (حساب فاضي) — اللي شغّال أصلاً ما بيشوف إشي. */
+const DAFTAR_YT = "https://www.youtube.com/@DaftarApp";
+function onbGet() { try { return JSON.parse(localStorage.getItem(LS_PREFIX + "onb") || "null"); } catch (e) { return null; } }
+function onbSet(o) { try { localStorage.setItem(LS_PREFIX + "onb", JSON.stringify(o)); } catch (e) {} }
+function onbEnsure() {
+  let o = onbGet();
+  if (o) return o;
+  if (REP_MODE || state.isRepEntry || !state.activeAccountId) return null;
+  let fresh = false;
+  try { fresh = scoped("products").length < 3 && scoped("sales").length === 0 && scoped("purchases").length === 0; } catch (e) {}
+  o = fresh ? { newUser: true, welcome: false, tips: {}, steps: true } : { newUser: false, welcome: true, tips: {}, steps: false };
+  onbSet(o);
+  return o;
+}
+function openExternal(url) {
+  try { if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) { location.href = url; return; } } catch (e) {}
+  window.open(url, "_blank");
+}
+const ONB_SLIDES = [
+  ["📒", "أهلاً فيك بدفتر", "دفتر بيرتّبلك شغلك كله: البضاعة، الفواتير، ديون الزباين والموردين، والصندوق — من جوالك."],
+  ["📦", "ضيف أصنافك", "من «المخزون» ضيف كل صنف باسمه وسعره وكميته. وبتقدر تصوّر الباركود بالكاميرا عشان تلاقيه بسرعة."],
+  ["🛒", "فاتورة بيع بثواني", "اكتب اسم الصنف أو صوّر الباركود، اختار نقدي أو آجل، وخلصت. المخزون والصندوق وحساب الزبون بيتعدّلوا لحالهم."],
+  ["👥", "الديون والشيكات", "كل زبون ومورد إله كشف حساب. والشيكات بتذكّرك فيها قبل موعدها."],
+  ["☁️", "بياناتك بأمان", "كل إشي محفوظ على حسابك، وما بيضيع لو غيّرت جوالك. يلا نبلّش!"],
+];
+function onbWelcomeHtml() {
+  const i = Math.min(state._onbSlide || 0, ONB_SLIDES.length - 1);
+  const [icon, title, text] = ONB_SLIDES[i];
+  const last = i === ONB_SLIDES.length - 1;
+  return `<div style="position:fixed;inset:0;z-index:9000;background:rgba(20,30,20,.55);display:flex;align-items:center;justify-content:center;padding:16px;">
+    <div style="background:var(--paper, #fff);border-radius:18px;max-width:380px;width:100%;padding:26px 20px 18px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.25);">
+      <div style="font-size:58px;line-height:1;margin-bottom:12px;">${icon}</div>
+      <div style="font-size:20px;font-weight:800;margin-bottom:10px;">${title}</div>
+      <div style="font-size:14.5px;line-height:1.9;color:var(--inkSoft);min-height:84px;">${text}</div>
+      <div style="display:flex;justify-content:center;gap:6px;margin:14px 0 16px;">${ONB_SLIDES.map((_, k) => `<span style="width:${k === i ? 18 : 7}px;height:7px;border-radius:4px;background:${k === i ? "var(--green)" : "#ccc"};"></span>`).join("")}</div>
+      ${last ? `<button class="btn btn-green btn-block" style="padding:13px;font-size:15px;" onclick="onbFinishWelcome()">يلا نبلّش ✅</button>
+        <button class="btn btn-ghost btn-block" style="margin-top:8px;" onclick="openExternal(DAFTAR_YT)">📺 شاهد دروس الفيديو</button>`
+      : `<div class="row-flex" style="gap:8px;">
+          <button class="btn btn-ghost flex1" onclick="onbFinishWelcome()">تخطّي</button>
+          <button class="btn btn-green flex1" style="padding:12px;" onclick="state._onbSlide=${i + 1};render();">التالي ←</button>
+        </div>`}
+    </div></div>`;
+}
+function onbFinishWelcome() { const o = onbGet() || {}; o.welcome = true; onbSet(o); state._onbSlide = 0; render(); }
+// كرت «خطواتك الأولى» بالرئيسية
+function onbStepsHtml() {
+  const o = onbGet(); if (!o || !o.newUser || !o.steps) return "";
+  const steps = [
+    ["📦", "ضيف أول صنف", "inventory", scoped("products").length > 0],
+    ["🚚", "سجّل فاتورة شراء (البضاعة اللي عندك)", "purchases", scoped("purchases").length > 0],
+    ["🛒", "اعمل أول فاتورة بيع", "sales", scoped("sales").length > 0],
+    ["👥", "ضيف أول زبون (للبيع بالآجل)", "customers", scoped("customers").length > 0],
+  ];
+  const done = steps.filter((x) => x[3]).length;
+  if (done === steps.length) return "";
+  return `<div class="card" style="padding:12px 14px;margin-bottom:14px;border:1.5px solid var(--green);">
+    <div class="flex-between" style="margin-bottom:6px;"><strong style="font-size:14.5px;">🚀 خطواتك الأولى <span class="mono" style="color:var(--inkSoft);font-weight:400;">${done}/${steps.length}</span></strong>
+      <button class="icon-btn" style="font-size:12px;color:var(--inkSoft);" onclick="onbHideSteps()">إخفاء ✕</button></div>
+    ${steps.map(([ic, label, scr, ok]) => `<div class="list-row" style="cursor:pointer;${ok ? "opacity:.55;" : ""}" onclick="goScreen('${scr}')">
+      <span style="font-size:18px;">${ok ? "✅" : ic}</span><div class="flex1" style="font-size:13.5px;${ok ? "text-decoration:line-through;" : "font-weight:600;"}">${label}</div>${ok ? "" : `<span style="color:var(--green);">←</span>`}</div>`).join("")}
+    <button class="btn btn-ghost btn-block" style="margin-top:8px;font-size:13px;" onclick="openExternal(DAFTAR_YT)">📺 شاهد دروس الفيديو على يوتيوب</button>
+  </div>`;
+}
+function onbHideSteps() { const o = onbGet() || {}; o.steps = false; onbSet(o); render(); }
+// تلميح لمرة وحدة بكل شاشة
+const ONB_TIPS = {
+  inventory: "هون كل أصنافك. اكبس «صنف جديد» واكتب الاسم والسعر والكمية. وزر الكاميرا 📷 بيلاقيلك الصنف من الباركود.",
+  sales: "اكبس «فاتورة بيع جديدة» وضيف الأصناف. و«فاتورة سريعة» إذا بدك تسجّل المبلغ بس بدون أصناف.",
+  purchases: "سجّل هون البضاعة اللي بتشتريها: المخزون بيزيد لحاله، والكلفة بتنحسب، وحساب المورد بيتسجّل.",
+  customers: "ضيف زباينك هون. البيع بالآجل بينزل على حساب الزبون، ولما يدفع سجّل سند قبض. اكبس على أي زبون لتشوف كشف حسابه.",
+  suppliers: "ضيف الموردين هون. فواتير الشراء بالآجل بتنزل على حسابهم، ولما تدفعلهم سجّل الدفعة من صفحة المورد.",
+  expenses: "سجّل مصاريفك (إيجار، كهربا، بنزين...) — بتنخصم من الصندوق وبتطلع بالتقارير.",
+  cashbox: "الصندوق بيحسب لحاله كل الكاش الداخل والطالع من الفواتير والسندات. وهون كمان الشيكات.",
+  reports: "هون المبيعات والأرباح لأي فترة بتختارها.",
+  saleCart: "اكتب اسم الصنف أو صوّره بالكاميرا 📷 وبينضاف للفاتورة. عدّل الكمية والسعر من الفاتورة، وبالآخر اختار نقدي أو آجل واكبس «إتمام البيع».",
+  purchaseCart: "اختار المورد وضيف الأصناف بسعر الشراء. إذا الصنف مش موجود، اكتب اسمه واكبس «كصنف جديد».",
+};
+function onbTipHtml(id) {
+  const o = onbGet(); if (!o || !o.newUser || !ONB_TIPS[id] || (o.tips || {})[id]) return "";
+  return `<div class="card" style="padding:10px 12px;margin-bottom:12px;background:var(--goldLight);border:1.5px solid var(--gold);">
+    <div style="font-size:13.5px;line-height:1.8;">💡 ${ONB_TIPS[id]}</div>
+    <div style="text-align:left;margin-top:4px;"><button class="btn btn-ghost" style="padding:5px 14px;font-size:12.5px;" onclick="onbTipDone('${id}')">فهمت ✓</button></div>
+  </div>`;
+}
+function onbTipDone(id) { const o = onbGet() || {}; o.tips = { ...(o.tips || {}), [id]: true }; onbSet(o); lastMainSig = null; render(); }
 
 /* ===================== سجل البطء (تشخيص) =====================
    أي عملية بتاخد أكثر من ثلث ثانية بتنسجل، وبتبين بالإعدادات «🐢 سجل البطء» — عشان نعرف وين بيعلق على الجوال */
