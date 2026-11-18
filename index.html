@@ -2412,18 +2412,18 @@ function persistScoped(key, newItemsForAccount) {
   persist(key);
 }
 /* ===== ترقيم المستندات: بيع ب-1، شراء ش-1، قبض ق-1، صرف ص-1 (كل نوع عدّاد خاص لكل حساب) ===== */
-const DOC_SERIES = { S: { ar: "ب", en: "S" }, P: { ar: "ش", en: "P" }, R: { ar: "ق", en: "R" }, V: { ar: "ص", en: "V" } };
+const DOC_SERIES = { S: { ar: "ب", en: "S" }, P: { ar: "ش", en: "P" }, R: { ar: "ق", en: "R" }, V: { ar: "ص", en: "V" }, RS: { ar: "ر", en: "RS" }, RP: { ar: "رش", en: "RP" } };
 function docSeriesOf(key, rec) {
-  if (key === "sales") return "S";
-  if (key === "purchases") return "P";
+  if (key === "sales") return rec && rec.retSeries ? "RS" : "S";
+  if (key === "purchases") return rec && rec.retSeries ? "RP" : "P";
   if (key === "vouchers") return rec && rec.partyKind === "supplier" ? "V" : "R";
   return null;
 }
 function docSeriesGuess(rec) {
   if (!rec) return "S";
   if (rec.partyKind) return rec.partyKind === "supplier" ? "V" : "R";
-  if (Object.prototype.hasOwnProperty.call(rec, "supplierId")) return "P";
-  return "S";
+  if (Object.prototype.hasOwnProperty.call(rec, "supplierId")) return rec.retSeries ? "RP" : "P";
+  return rec.retSeries ? "RS" : "S";
 }
 function docNextNo(key, series, accountId) {
   let max = 0;
@@ -3847,8 +3847,9 @@ function renderSales() {
   const sales = scoped("sales");
 
   let html = `<button class="btn btn-green btn-block" style="margin-bottom:8px;padding:14px;font-size:15px;" onclick="openNewSaleInvoice()">➕ فاتورة بيع جديدة</button>
-  <div class="row-flex" style="margin-bottom:12px;">
-    <button class="btn btn-gold btn-block" onclick="openQuickSale()">🧾 فاتورة سريعة (رقم + مجموع بدون أصناف)</button>
+  <div class="row-flex" style="margin-bottom:12px;gap:8px;">
+    <button class="btn btn-gold flex1" onclick="openQuickSale()">🧾 فاتورة سريعة</button>
+    <button class="btn btn-ghost flex1" style="color:var(--stamp);border-color:var(--stamp);" onclick="openReturnInvoice('sale')">↩️ مرتجع مبيعات</button>
   </div>`;
 
   html += `<div class="section-title" style="margin-top:20px;">فواتير المبيعات</div>`;
@@ -3881,7 +3882,7 @@ function renderSalesInvoiceListInner() {
       <div class="flex1"><div class="truncate" style="font-size:12.5px;">${label} <bdi>${docNo(s, "sales")}</bdi>${noSuffix} · ${s.quick ? "بدون أصناف" : s.items.length + " صنف"} ${s.payType === "credit" && !s.isReturn ? "· آجل" : ""}${s.editedAt ? " · ✏️ معدّلة" : ""}${cust ? " · " + esc(cust) : ""}${s.repId ? ' · <span style="color:#2f5233;font-weight:700;">🚚 ' + esc(repNameOf(s.repId)) + '</span>' : ""}</div><div class="mono row-sub">${fmtDateTime(s.ts)}</div></div>
       <span class="mono" style="font-weight:700;">${fmt(s.total)}</span>
       <button class="icon-btn" style="color:var(--green);" onclick="printSale('${s.id}')">🖨</button>
-      ${REP_MODE ? "" : `<button class="icon-btn" style="color:var(--inkSoft);" onclick="startEditSale('${s.id}')">✎</button>
+      ${REP_MODE || s.isReturn ? "" : `<button class="icon-btn" style="color:var(--inkSoft);" onclick="startEditSale('${s.id}')">✎</button>
       <button class="icon-btn" style="color:var(--stamp);" onclick="deleteSale('${s.id}')">🗑</button>`}
     </div>`;
   }).join("") + `</div>` + (q ? "" : foldMoreBtn("ownSales", filtered.length));
@@ -4342,6 +4343,7 @@ function completeQuickSale() {
 function startEditSale(id) {
   const s = scoped("sales").find((x) => x.id === id);
   if (!s) return;
+  if (s.isReturn && !REP_MODE) { flash("المرتجع ما بيتعدّل — احذفه وسجّله من جديد"); return; }
   if (REP_MODE) {
     const r = currentRep();
     if (!r || s.repId !== r.id) { flash("بتقدر تعدّل فواتيرك بس"); return; }
@@ -4381,6 +4383,7 @@ function deleteSale(id) {
     persistScoped("products", scoped("products").map((p) => (restore[p.id] ? { ...p, stock: p.stock + restore[p.id] } : p)));
   }
   persistScoped("sales", scoped("sales").filter((x) => x.id !== id));
+  if (scoped("manualCash").some((m) => m.returnId === id)) persistScoped("manualCash", scoped("manualCash").filter((m) => m.returnId !== id));
   if (state.editingSaleId === id) resetSaleForm(); else render();
   flash(s.sourceWarehouseId ? "تم إلغاء الفاتورة ورجعت البضاعة للمستودع" : "تم إلغاء الفاتورة");
 }
@@ -4399,8 +4402,9 @@ function renderPurchases() {
   const purchases = scoped("purchases");
 
   let html = `<button class="btn btn-green btn-block" style="margin-bottom:8px;padding:14px;font-size:15px;" onclick="openNewPurchaseInvoice()">➕ فاتورة شراء جديدة</button>
-  <div class="row-flex" style="margin-bottom:12px;">
-    <button class="btn btn-gold btn-block" onclick="openQuickPurchase()">🧾 فاتورة سريعة (رقم + مجموع بدون أصناف)</button>
+  <div class="row-flex" style="margin-bottom:12px;gap:8px;">
+    <button class="btn btn-gold flex1" onclick="openQuickPurchase()">🧾 فاتورة سريعة</button>
+    <button class="btn btn-ghost flex1" style="color:var(--stamp);border-color:var(--stamp);" onclick="openReturnInvoice('purchase')">↩️ مرتجع مشتريات</button>
   </div>`;
 
   html += `<div class="section-title" style="margin-top:20px;">فواتير المشتريات</div>`;
@@ -4688,6 +4692,7 @@ function completeQuickPurchase() {
 function startEditPurchase(id) {
   const p = scoped("purchases").find((x) => x.id === id);
   if (!p) return;
+  if (p.isReturn) { flash("المرتجع ما بيتعدّل — احذفه وسجّله من جديد"); return; }
   state.editingPurchaseId = id;
   if (p.quick) {
     state.purchaseForm = { supplierId: p.supplierId || "", payType: p.payType, paidNow: String(p.paidNow), quickMode: true, invoiceNo: p.invoiceNo || "", quickTotal: String(p.total), photo: p.photo || null };
@@ -4706,6 +4711,7 @@ function deletePurchase(id) {
   p.items.forEach((it) => { restore[it.productId] = (restore[it.productId] || 0) - it.qty; });
   persistScoped("products", scoped("products").map((pr) => (restore[pr.id] ? { ...pr, stock: pr.stock + restore[pr.id] } : pr)));
   persistScoped("purchases", scoped("purchases").filter((x) => x.id !== id));
+  if (scoped("manualCash").some((m) => m.returnId === id)) persistScoped("manualCash", scoped("manualCash").filter((m) => m.returnId !== id));
   if (state.editingPurchaseId === id) resetPurchaseForm(); else render();
   flash("تم إلغاء فاتورة الشراء");
 }
@@ -4867,6 +4873,14 @@ function handleScanResult(context, code) {
       if (found) { addToPCart(found.id); flash("تمت إضافة: " + found.name); }
       else { openNewItemModal("", code); }
     }
+    return;
+  }
+  if (context === "return") {
+    state.modal = { type: "returnCart" };
+    const p = scoped("products").find((x) => productMatchesCode(x, code));
+    if (p) { rcAddProduct(p.id); flash("✅ " + p.name); }
+    else flash("⚠️ ما في صنف بهالباركود");
+    render();
     return;
   }
   if (context === "inventory") {
@@ -6865,6 +6879,7 @@ async function btWriteFast(ch, bytes) {
 function printInvoice(p, kind) {
   const settings = currentSettings();
   const isSale = kind === "sale";
+  if (p.isReturn) return printReturnInvoice(p, kind, settings);
   const rows = p.items.map((it) => `<tr style="border-bottom:1px dotted #ccc;"><td style="text-align:right;padding:4px 0;">${esc(it.name)}</td><td style="text-align:center;">${it.qty}</td><td style="text-align:center;">${fmt(it.price ?? it.cost)}</td><td style="text-align:center;">${fmt((it.price ?? it.cost) * it.qty)}</td></tr>`).join("");
   const html = `${printHead(settings)}
     <div style="text-align:center;font-weight:700;font-size:13px;margin-bottom:10px;">${isSale ? "فاتورة بيع" : "فاتورة شراء"}${p.quick ? " — سريعة" : ""} <bdi>${docNo(p, isSale ? "sales" : "purchases")}</bdi></div>
@@ -6879,6 +6894,24 @@ function printInvoice(p, kind) {
       <div style="display:flex;justify-content:space-between;font-weight:700;font-size:14px;"><span>الإجمالي</span><span>${fmt(p.total)} ${esc(settings.currency)}</span></div>
       <div style="display:flex;justify-content:space-between;font-size:12px;"><span>المدفوع</span><span>${fmt(p.paidNow)} ${esc(settings.currency)}</span></div>
       ${p.total - p.paidNow > 0 ? `<div style="display:flex;justify-content:space-between;font-weight:700;font-size:12px;"><span>المتبقي (آجل)</span><span>${fmt(p.total - p.paidNow)} ${esc(settings.currency)}</span></div>` : ""}
+    </div>`;
+  showPrint(html);
+}
+function printReturnInvoice(p, kind, settings) {
+  const isSale = kind === "sale";
+  const cur = esc(settings.currency);
+  const rows = (p.items || []).map((it) => { const q = Math.abs(Number(it.qty) || 0); const pr = Number(isSale ? it.price : it.cost) || 0;
+    return `<tr style="border-bottom:1px dotted #ccc;"><td style="text-align:right;padding:4px 0;">${esc(it.name)}</td><td style="text-align:center;">${fmt(q)}</td><td style="text-align:center;">${fmt(pr)}</td><td style="text-align:left;">${fmt(q * pr)}</td></tr>`; }).join("");
+  const cash = Number(p.paidNow) < 0;
+  const html = `${printHead(settings)}
+    <div style="text-align:center;font-weight:700;font-size:14px;margin-bottom:10px;">↩️ ${isSale ? "فاتورة مرتجع مبيعات" : "فاتورة مرتجع مشتريات"} <bdi>${docNo(p, isSale ? "sales" : "purchases")}</bdi></div>
+    <div style="display:flex;justify-content:space-between;font-size:12px;"><span>${isSale ? "العميل" : "المورد"}</span><span>${esc(p.partyName || "—")}</span></div>
+    ${p.returnedBy ? `<div style="display:flex;justify-content:space-between;font-size:12px;"><span>رجّع البضاعة</span><span>${esc(p.returnedBy)}</span></div>` : ""}
+    <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:10px;"><span>التاريخ</span><span>${fmtDateTime(p.ts)}</span></div>
+    <table style="width:100%;font-size:12px;border-collapse:collapse;margin-bottom:10px;"><thead><tr style="border-bottom:1px solid #999;"><th style="text-align:right;">الصنف</th><th>كمية</th><th>سعر</th><th style="text-align:left;">إجمالي</th></tr></thead><tbody>${rows}</tbody></table>
+    <div style="border-top:1px dashed #999;padding-top:6px;">
+      <div style="display:flex;justify-content:space-between;font-weight:700;font-size:14px;"><span>مجموع المرتجع</span><span>${fmt(Math.abs(p.total))} ${cur}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;"><span>طريقة الإرجاع</span><span>${cash ? (isSale ? "رجّعنا المبلغ كاش" : "استلمنا المبلغ كاش") : (isSale ? "خصم من حساب العميل" : "خصم من حساب المورد")}</span></div>
     </div>`;
   showPrint(html);
 }
@@ -7158,6 +7191,7 @@ function renderModal() {
   else if (m.type === "product") inner = productModalHtml(m.product);
   else if (m.type === "newItem") inner = newItemModalHtml(m.name, m.barcode, m);
   else if (m.type === "repReceive") inner = repReceiveModalHtml(m);
+  else if (m.type === "returnCart") inner = returnCartHtml();
   else if (m.type === "importText") inner = importTextModalHtml();
   else if (m.type === "collectCheck") inner = collectModalHtml(m.id);
   else if (m.type === "saleCart") inner = onbTipHtml("saleCart") + renderSaleCartSheet();
@@ -8858,6 +8892,108 @@ function onbTipHtml(id) {
   </div>`;
 }
 function onbTipDone(id) { const o = onbGet() || {}; o.tips = { ...(o.tips || {}), [id]: true }; onbSet(o); lastMainSig = null; render(); }
+
+/* ===================== فاتورة مرتجع (مبيعات / مشتريات) =====================
+   زي فاتورة البيع: الزبون أو المورد، مين رجّع البضاعة، الأصناف، وكيف رجعت المصاري (خصم من الحساب أو كاش). */
+function openReturnInvoice(kind) {
+  state.rc = { kind, partyId: "", who: "", items: [], refund: "account", q: "" };
+  state.modal = { type: "returnCart" };
+  render();
+}
+function rcParties() { return (state.rc.kind === "sale" ? scoped("customers") : scoped("suppliers")).slice().sort((a, b) => String(a.name).localeCompare(String(b.name), "ar")); }
+function rcDefaultPrice(p) {
+  const rc = state.rc;
+  if (rc.kind === "purchase") {
+    const last = scoped("purchases").filter((x) => !x.isReturn && (!rc.partyId || x.supplierId === rc.partyId)).sort((a, b) => String(b.ts).localeCompare(String(a.ts)))
+      .map((x) => (x.items || []).find((i) => i.productId === p.id)).find(Boolean);
+    return last ? Number(last.cost) || 0 : Number(p.cost) || 0;
+  }
+  const last = rc.partyId ? scoped("sales").filter((x) => !x.isReturn && x.customerId === rc.partyId).sort((a, b) => String(b.ts).localeCompare(String(a.ts)))
+    .map((x) => (x.items || []).find((i) => i.productId === p.id && i.qty > 0)).find(Boolean) : null;
+  return last ? Number(last.price) || 0 : Number(p.price) || 0;
+}
+function rcAddProduct(pid) {
+  const p = scoped("products").find((x) => x.id === pid); if (!p) return;
+  const ex = state.rc.items.find((i) => i.productId === pid);
+  if (ex) ex.qty = (Number(ex.qty) || 0) + 1;
+  else state.rc.items.push({ productId: p.id, name: p.name, qty: 1, price: rcDefaultPrice(p) });
+  state.rc.q = "";
+  render();
+}
+function rcSet(i, f, v) { const it = state.rc.items[i]; if (!it) return; it[f] = v; const t = document.getElementById("rc-total"); if (t) t.textContent = fmt(rcTotal()); const lt = document.getElementById("rc-lt-" + i); if (lt) lt.textContent = fmt((parseFloat(it.qty) || 0) * (parseFloat(it.price) || 0)); }
+function rcTotal() { return state.rc.items.reduce((a, i) => a + (parseFloat(i.qty) || 0) * (parseFloat(i.price) || 0), 0); }
+function returnCartHtml() {
+  const rc = state.rc; if (!rc) return "";
+  const isSale = rc.kind === "sale";
+  const cur = esc(currentSettings().currency);
+  const parties = rcParties();
+  const q = String(rc.q || "").trim();
+  const matches = q ? scoped("products").filter((p) => String(p.name).includes(q) || productMatchesCode(p, q)).slice(0, 8) : [];
+  const noAcc = isSale && !rc.partyId;
+  const refund = noAcc ? "cash" : rc.refund;
+  return `<div class="modal-title-row"><h3 style="color:var(--stamp);">↩️ ${isSale ? "مرتجع مبيعات" : "مرتجع مشتريات"}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <label class="field"><span class="lbl">${isSale ? "الزبون اللي رجّع البضاعة" : "المورد اللي رجّعناله"}</span>
+      <select id="rc-party" onchange="state.rc.partyId=this.value;state.rc.items.forEach((it)=>{const p=scoped('products').find((x)=>x.id===it.productId);if(p)it.price=rcDefaultPrice(p);});render();">
+        ${isSale ? `<option value="">نقدي (بدون حساب)</option>` : `<option value="">— اختار المورد —</option>`}
+        ${parties.map((c) => `<option value="${c.id}" ${c.id === rc.partyId ? "selected" : ""}>${esc(c.name)}</option>`).join("")}
+      </select></label>
+    <div class="row-flex" style="gap:6px;margin-bottom:8px;">
+      <input id="rc-q" class="flex1" value="${esc(rc.q || "")}" placeholder="🔍 اكتب اسم الصنف أو الباركود..." oninput="state.rc.q=this.value;clearTimeout(window._rcQT);window._rcQT=setTimeout(render,250);" />
+      <button class="btn btn-ghost" style="background:var(--greenLight);color:var(--green);" onclick="openScanModal('return')">📷</button>
+    </div>
+    ${matches.length ? `<div class="card" style="padding:4px 8px;margin-bottom:10px;">${matches.map((p) => `<div class="list-row" style="cursor:pointer;" onclick="rcAddProduct('${p.id}')"><div class="flex1">${esc(p.name)}</div><span class="mono row-sub">${fmt(isSale ? p.price : p.cost)}</span><span style="color:var(--green);font-weight:700;">＋</span></div>`).join("")}</div>` : q ? `<div class="row-sub" style="margin-bottom:10px;">ما في صنف بهالاسم</div>` : ""}
+    ${rc.items.length ? rc.items.map((it, i) => `<div class="card" style="padding:8px 10px;margin-bottom:6px;border-color:var(--stamp);">
+        <div class="flex-between" style="margin-bottom:6px;"><strong style="font-size:13.5px;">${esc(it.name)}</strong><button class="icon-btn" style="color:var(--stamp);" onclick="state.rc.items.splice(${i},1);render();">🗑</button></div>
+        <div class="grid3" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">
+          <label class="field" style="margin:0;"><span class="lbl">الكمية</span><input class="mono" inputmode="decimal" value="${esc(it.qty)}" oninput="rcSet(${i},'qty',this.value)" /></label>
+          <label class="field" style="margin:0;"><span class="lbl">${isSale ? "السعر" : "التكلفة"}</span><input class="mono" inputmode="decimal" value="${esc(it.price)}" oninput="rcSet(${i},'price',this.value)" /></label>
+          <div><span class="lbl">المجموع</span><div id="rc-lt-${i}" class="mono" style="padding:9px 4px;font-weight:700;">${fmt((parseFloat(it.qty) || 0) * (parseFloat(it.price) || 0))}</div></div>
+        </div></div>`).join("") : `<div class="row-sub" style="margin:6px 0 12px;text-align:center;">ضيف الأصناف اللي رجعت</div>`}
+    <div class="flex-between" style="margin:10px 0;padding:10px 12px;background:var(--stampLight);border-radius:10px;"><strong>مجموع المرتجع</strong><strong class="mono" style="font-size:17px;color:var(--stamp);"><span id="rc-total">${fmt(rcTotal())}</span> ${cur}</strong></div>
+    <div class="row-flex" style="gap:6px;margin-bottom:12px;">
+      ${noAcc ? `<div class="row-sub" style="flex:1;text-align:center;">بدون حساب: المبلغ بيطلع من الصندوق كاش</div>` : `
+      <button class="btn ${refund === "account" ? "btn-green" : "btn-ghost"} flex1" onclick="state.rc.refund='account';render();">${isSale ? "خصم من حسابه" : "خصم من حساب المورد"}</button>
+      <button class="btn ${refund === "cash" ? "btn-gold" : "btn-ghost"} flex1" onclick="state.rc.refund='cash';render();">${isSale ? "رجّعتله كاش" : "استلمت كاش"}</button>`}
+    </div>
+    <button class="btn btn-stamp btn-block" style="padding:13px;" onclick="saveReturnInvoice()">✅ تأكيد المرتجع</button>`;
+}
+function saveReturnInvoice() {
+  const rc = state.rc; if (!rc) return;
+  const isSale = rc.kind === "sale";
+  const items = rc.items.map((i) => ({ ...i, qty: parseFloat(i.qty) || 0, price: parseFloat(i.price) || 0 })).filter((i) => i.qty > 0);
+  if (!items.length) { flash("ضيف صنف واحد على الأقل"); return; }
+  if (!isSale && !rc.partyId) { flash("اختار المورد"); return; }
+  const total = Math.round(items.reduce((a, i) => a + i.qty * i.price, 0) * 1000) / 1000;
+  const cash = (isSale && !rc.partyId) || rc.refund === "cash";
+  const party = rc.partyId ? (isSale ? scoped("customers") : scoped("suppliers")).find((x) => x.id === rc.partyId) : null;
+  const who = String(rc.who || "").trim();
+  const ts = new Date().toISOString();
+  const id = uid();
+  // المخزون: مرتجع البيع بيرجع للمحل، ومرتجع الشراء بيطلع منه
+  const delta = {};
+  items.forEach((i) => { delta[i.productId] = (delta[i.productId] || 0) + (isSale ? i.qty : -i.qty); });
+  persistScoped("products", scoped("products").map((p) => (delta[p.id] ? { ...p, stock: (Number(p.stock) || 0) + delta[p.id] } : p)));
+  let rec;
+  if (isSale) {
+    rec = { id, ts, customerId: rc.partyId || null, items: items.map((i) => ({ productId: i.productId, name: i.name, price: i.price, qty: -i.qty })),
+      subtotal: -total, tax: 0, discount: 0, total: -total, paidNow: cash ? -total : 0, payType: cash ? "cash" : "credit", isReturn: true, retSeries: true, returnedBy: who || undefined };
+    addScoped("sales", JSON.parse(JSON.stringify(rec)));
+  } else {
+    rec = { id, ts, supplierId: rc.partyId, items: items.map((i) => ({ productId: i.productId, name: i.name, cost: i.price, qty: -i.qty })),
+      total: -total, paidNow: cash ? -total : 0, payType: cash ? "cash" : "credit", isReturn: true, retSeries: true, returnedBy: who || undefined };
+    addScoped("purchases", JSON.parse(JSON.stringify(rec)));
+  }
+  const saved = scoped(isSale ? "sales" : "purchases").find((x) => x.id === id);
+  if (cash) {
+    addScoped("manualCash", { id: uid(), ts, type: isSale ? "out" : "in", amount: total, returnId: id,
+      desc: `${isSale ? "مرتجع مبيعات نقدي" : "مرتجع مشتريات نقدي"} ${docNo(saved, isSale ? "sales" : "purchases")}${party ? ": " + party.name : ""}` });
+  }
+  state.rc = null;
+  state.modal = null;
+  flash(`✅ انسجل المرتجع ${docNo(saved, isSale ? "sales" : "purchases")} بـ ${fmt(total)}`);
+  render();
+  try { isSale ? printSale(id) : printPurchase(id); } catch (e) {}
+}
 
 /* ===================== سجل البطء (تشخيص) =====================
    أي عملية بتاخد أكثر من ثلث ثانية بتنسجل، وبتبين بالإعدادات «🐢 سجل البطء» — عشان نعرف وين بيعلق على الجوال */
