@@ -192,6 +192,8 @@ const I18N_EN = {
 "عندي حساب — دخول": "I have an account — Sign in",
 "ما عندي حساب — إنشاء حساب": "No account — Create one",
 "نسيت كلمة السر؟": "Forgot password?",
+"الدخول بحساب جوجل": "Continue with Google",
+"أو": "or",
 "اكتب الإيميل وكلمة السر": "Enter email and password",
 "كلمة السر لازم تكون": "Password must be",
 "كلمتين السر مش متطابقات": "Passwords don't match",
@@ -1895,6 +1897,7 @@ function authInit() {
   if ((state.isRepEntry && !REP_MODE) || !authAvailable()) { authReady = true; return; }
   try {
     cloudInit();
+    try { if (!isNativeApp()) window.firebase.auth().getRedirectResult().catch((e) => { if (e && e.code && !/no-auth-event/.test(e.code)) flash(authErrorAr(e)); }); } catch (e) {}
     window.firebase.auth().onAuthStateChanged((u) => {
       authUser = u || null;
       authReady = true;
@@ -1920,7 +1923,11 @@ function authErrorAr(e) {
     "auth/weak-password": "كلمة السر ضعيفة — 6 أحرف أو أرقام على الأقل",
     "auth/network-request-failed": "ما في إنترنت — تأكد من الاتصال",
     "auth/too-many-requests": "محاولات كثيرة — استنى شوي وجرّب",
-    "auth/operation-not-allowed": "تسجيل الدخول بالإيميل مش مفعّل بعد على فايربيس",
+    "auth/operation-not-allowed": "طريقة الدخول هاي مش مفعّلة بعد على فايربيس",
+    "auth/account-exists-with-different-credential": "هاد الإيميل إله حساب بكلمة سر — ادخل بالإيميل وكلمة السر",
+    "auth/unauthorized-domain": "هاد الموقع مش مسموح لدخول جوجل (لازم ينضاف بفايربيس)",
+    "auth/popup-blocked": "المتصفح منع نافذة جوجل — اسمح بالنوافذ وجرّب كمان مرة",
+    "auth/internal-error": "صار خطأ بدخول جوجل — جرّب كمان مرة",
   };
   return "❌ " + (m[c] || ("صار خطأ" + (c ? " (" + c + ")" : "")));
 }
@@ -1949,6 +1956,10 @@ function renderAuthScreen() {
     <label class="field"><span class="lbl">كلمة السر</span>${passInput("auth-pass", mode === "signup" ? "new-password" : "current-password")}</label>
     ${mode === "signup" ? `<label class="field"><span class="lbl">أعد كتابة كلمة السر</span>${passInput("auth-pass2", "new-password")}</label>` : ""}
     <button class="btn btn-green btn-block" ${busy} onclick="authSubmit()">${authBusy ? "⏳ لحظة..." : (mode === "signup" ? "إنشاء الحساب" : "دخول")}</button>
+    ${googleSignInAvailable() ? `<div style="display:flex;align-items:center;gap:8px;margin:14px 0 10px;color:var(--inkSoft);font-size:12px;"><span style="flex:1;height:1px;background:var(--line);"></span>أو<span style="flex:1;height:1px;background:var(--line);"></span></div>
+    <button class="btn btn-ghost btn-block" ${busy} style="display:flex;align-items:center;justify-content:center;gap:10px;background:#fff;border:1.5px solid #dadce0;color:#3c4043;font-weight:700;padding:12px;" onclick="authGoogle()">
+      <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+      الدخول بحساب جوجل</button>` : ""}
     <div style="display:flex;justify-content:space-between;gap:8px;margin-top:14px;flex-wrap:wrap;">
       <button class="btn btn-ghost" onclick="state.authMode='${mode === "signup" ? "login" : "signup"}'; render();">${mode === "signup" ? "عندي حساب — دخول" : "ما عندي حساب — إنشاء حساب"}</button>
       ${mode === "login" ? `<button class="btn btn-ghost" onclick="authForgot()">نسيت كلمة السر؟</button>` : ""}
@@ -1972,6 +1983,42 @@ async function authSubmit() {
     if (mode === "signup") await auth.createUserWithEmailAndPassword(email, pass);
     else await auth.signInWithEmailAndPassword(email, pass);
   } catch (e) { console.error(e); flash(authErrorAr(e)); }
+  authBusy = false; render();
+}
+// ===== الدخول بحساب جوجل =====
+// على الرابط (المتصفح): نافذة جوجل العادية. على تطبيق جوجل بلاي: إضافة أصلية (FirebaseAuthentication)
+// بتجيب "توكن" جوجل، وبعدين بندخل فيه بنفس فايربيس اللي بنستعمله للإيميل — فكل إشي ثاني بيضل زي ما هو.
+function isNativeApp() { try { return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); } catch (e) { return false; } }
+function googleSignInAvailable() {
+  if (!authAvailable()) return false;
+  if (!isNativeApp()) return true;
+  try { return !!(window.Capacitor.isPluginAvailable && window.Capacitor.isPluginAvailable("FirebaseAuthentication")); } catch (e) { return false; }
+}
+async function authGoogle() {
+  if (authBusy) return;
+  authBusy = true; render();
+  try {
+    const auth = window.firebase.auth();
+    if (isNativeApp()) {
+      const P = window.Capacitor.Plugins.FirebaseAuthentication;
+      const res = await P.signInWithGoogle({ skipNativeAuth: true });
+      const idToken = res && res.credential && res.credential.idToken;
+      if (!idToken) throw { code: "auth/internal-error" };
+      await auth.signInWithCredential(window.firebase.auth.GoogleAuthProvider.credential(idToken));
+    } else {
+      const prov = new window.firebase.auth.GoogleAuthProvider();
+      prov.setCustomParameters({ prompt: "select_account" });
+      try { await auth.signInWithPopup(prov); }
+      catch (e) {
+        if (e && (e.code === "auth/popup-blocked" || e.code === "auth/operation-not-supported-in-this-environment")) { await auth.signInWithRedirect(prov); return; }
+        throw e;
+      }
+    }
+  } catch (e) {
+    const c = (e && (e.code || e.message)) || "";
+    const cancelled = /popup-closed-by-user|cancelled-popup-request|cancel|canceled|USER_CANCELED|12501|16:/i.test(String(c));
+    if (!cancelled) { console.error("google sign-in failed", e); flash(authErrorAr(e)); }
+  }
   authBusy = false; render();
 }
 async function authForgot() {
@@ -8932,13 +8979,21 @@ function returnCartHtml() {
   const noAcc = isSale && !rc.partyId;
   const refund = noAcc ? "cash" : rc.refund;
   return `<div class="modal-title-row"><h3 style="color:var(--stamp);">↩️ ${isSale ? "مرتجع مبيعات" : "مرتجع مشتريات"}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
-    <label class="field"><span class="lbl">${isSale ? "الزبون اللي رجّع البضاعة" : "المورد اللي رجّعناله"}</span>
-      <select id="rc-party" onchange="state.rc.partyId=this.value;state.rc.items.forEach((it)=>{const p=scoped('products').find((x)=>x.id===it.productId);if(p)it.price=rcDefaultPrice(p);});render();">
-        ${isSale ? `<option value="">نقدي (بدون حساب)</option>` : `<option value="">— اختار المورد —</option>`}
-        ${parties.map((c) => `<option value="${c.id}" ${c.id === rc.partyId ? "selected" : ""}>${esc(c.name)}</option>`).join("")}
-      </select></label>
+    ${(() => {
+      const sel = rc.partyId ? parties.find((c) => c.id === rc.partyId) : null;
+      const lbl = isSale ? "الزبون اللي رجّع البضاعة" : "المورد اللي رجّعناله";
+      if (sel) return `<div class="field"><span class="lbl">${lbl}</span><div class="flex-between" style="padding:10px 12px;border:1.5px solid var(--green);border-radius:10px;background:var(--greenLight);"><strong>${esc(sel.name)}</strong><button class="icon-btn" style="color:var(--stamp);" onclick="state.rc.partyId='';state.rc.pq='';render();setTimeout(()=>{const e=document.getElementById('rc-pq');if(e)e.focus();},50);">✕ تغيير</button></div></div>`;
+      const pq = String(rc.pq || "").trim();
+      const norm = (x) => normName(String(x || ""));
+      const hits = pq ? parties.filter((c) => norm(c.name).includes(norm(pq)) || String(c.phone || "").includes(pq)).slice(0, 8) : [];
+      return `<div class="field"><span class="lbl">${lbl}</span>
+        <input id="rc-pq" value="${esc(rc.pq || "")}" placeholder="🔍 دوّر على ${isSale ? "الزبون" : "المورد"} بالاسم أو الرقم..." oninput="state.rc.pq=this.value;clearTimeout(window._rcPT);window._rcPT=setTimeout(()=>{render();const e=document.getElementById('rc-pq');if(e){e.focus();const v=e.value;e.setSelectionRange(v.length,v.length);}},250);" />
+        ${hits.length ? `<div class="card" style="padding:4px 8px;margin-top:6px;">${hits.map((c) => `<div class="list-row" style="cursor:pointer;" onclick="state.rc.partyId='${c.id}';state.rc.pq='';state.rc.items.forEach((it)=>{const p=scoped('products').find((x)=>x.id===it.productId);if(p)it.price=rcDefaultPrice(p);});render();"><div class="flex1">${esc(c.name)}</div><span style="color:var(--green);">←</span></div>`).join("")}</div>` : pq ? `<div class="row-sub" style="margin-top:6px;">ما في ${isSale ? "زبون" : "مورد"} بهالاسم</div>` : ""}
+        ${isSale ? `<div class="row-sub" style="margin-top:6px;margin-bottom:10px;">إذا ما اخترت زبون، بينسجل «نقدي» وبيطلع المبلغ من الصندوق</div>` : ""}
+      </div>`;
+    })()}
     <div class="row-flex" style="gap:6px;margin-bottom:8px;">
-      <input id="rc-q" class="flex1" value="${esc(rc.q || "")}" placeholder="🔍 اكتب اسم الصنف أو الباركود..." oninput="state.rc.q=this.value;clearTimeout(window._rcQT);window._rcQT=setTimeout(render,250);" />
+      <input id="rc-q" class="flex1" value="${esc(rc.q || "")}" placeholder="🔍 اكتب اسم الصنف أو الباركود..." oninput="state.rc.q=this.value;clearTimeout(window._rcQT);window._rcQT=setTimeout(()=>{render();const e=document.getElementById('rc-q');if(e){e.focus();const v=e.value;e.setSelectionRange(v.length,v.length);}},250);" />
       <button class="btn btn-ghost" style="background:var(--greenLight);color:var(--green);" onclick="openScanModal('return')">📷</button>
     </div>
     ${matches.length ? `<div class="card" style="padding:4px 8px;margin-bottom:10px;">${matches.map((p) => `<div class="list-row" style="cursor:pointer;" onclick="rcAddProduct('${p.id}')"><div class="flex1">${esc(p.name)}</div><span class="mono row-sub">${fmt(isSale ? p.price : p.cost)}</span><span style="color:var(--green);font-weight:700;">＋</span></div>`).join("")}</div>` : q ? `<div class="row-sub" style="margin-bottom:10px;">ما في صنف بهالاسم</div>` : ""}
