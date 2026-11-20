@@ -1,0 +1,63 @@
+{
+  "project_info": {
+    "project_number": "727145520285",
+    "project_id": "daftar-app-e0c7e",
+    "storage_bucket": "daftar-app-e0c7e.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:727145520285:android:102f0c85ef33ce067cc874",
+        "android_client_info": {
+          "package_name": "com.natsheh.daftar"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "727145520285-b15lg5l5afg73t462vufkq5vueckibap.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.natsheh.daftar",
+            "certificate_hash": "160ec1266d74a805d24a9af5d79eb6b04697b959"
+          }
+        },
+        {
+          "client_id": "727145520285-f8r9b3kmbunmv22jtlb3sv1khtv1gs8c.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.natsheh.daftar",
+            "certificate_hash": "ef7b3e91e7c655d51a2a69ce3163e1857a53c95a"
+          }
+        },
+        {
+          "client_id": "727145520285-lgblst200is1i6mfnglap35fc4v7o7sf.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.natsheh.daftar",
+            "certificate_hash": "53b59625dc8c77b0ae2685adfcf3b3ceccf30a43"
+          }
+        },
+        {
+          "client_id": "727145520285-ljcbgp09le4hfdul0o7sde1bpkugltkf.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDSNRz-5AULdXzmBuzBeqrLev7RA8zu90Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "727145520285-ljcbgp09le4hfdul0o7sde1bpkugltkf.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
