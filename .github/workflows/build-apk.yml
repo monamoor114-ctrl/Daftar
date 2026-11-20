@@ -28,11 +28,30 @@ jobs:
       - name: Install npm dependencies
         run: npm install --legacy-peer-deps
 
+      # دخول جوجل: الإضافة الأصلية بتنضاف بس إذا ملف google-services.json موجود (بدونه التطبيق بيوقع)
+      - name: Install Google sign-in plugin
+        run: |
+          if [ -f google-services.json ]; then
+            npm install @capacitor-firebase/authentication@8.6.0 --legacy-peer-deps
+            grep -n "capacitor-firebase" package.json
+          else
+            echo "::warning::google-services.json مش موجود — التطبيق بينبني بدون دخول جوجل"
+          fi
+
       - name: Add Android platform
         run: npx cap add android
 
       - name: Sync Capacitor Android project
         run: npx cap sync android
+
+      - name: Google sign-in native config
+        run: |
+          if [ -f google-services.json ]; then
+            cp google-services.json android/app/google-services.json
+            printf '\next {\n    rgcfaIncludeGoogle = true\n}\n' >> android/variables.gradle
+            tail -4 android/variables.gradle
+            grep -n "google-services" android/app/build.gradle android/build.gradle || true
+          fi
 
       - name: Apply custom native overrides
         run: |
@@ -85,7 +104,7 @@ jobs:
       - name: Show signing fingerprint
         run: |
           BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
-          $BT/apksigner verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk | grep -i "SHA-256"
+          $BT/apksigner verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk | grep -i "SHA-256\|SHA-1"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
