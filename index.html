@@ -2901,7 +2901,8 @@ function renderRepDashboard() {
   const myHandoversToday = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === rep.id);
   const handedOverToday = myHandoversToday.filter((h) => h.status !== "rejected").reduce((a, h) => a + h.amount, 0);
   const pendingHandover = myHandoversToday.find((h) => h.status === "pending");
-  const cashToday = Math.max(0, cashSalesToday + cashVouchersToday - repCashPaidOut(rep.id) - handedOverToday);
+  // نفس حساب الرئيسي بالزبط: كل تسليم مؤكَّد بيصفّر بساعته
+  let cashToday = 0; try { cashToday = repCashLedger(rep).withHim; } catch (e) { cashToday = Math.max(0, cashSalesToday + cashVouchersToday - repCashPaidOut(rep.id) - handedOverToday); }
   const perms = repPermissions(rep);
   return `<div style="min-height:100vh;background:var(--paper);padding-bottom:80px;">
     <div style="background:var(--greenDark);color:#fff;padding:16px;display:flex;justify-content:space-between;align-items:center;">
@@ -3265,7 +3266,8 @@ function repHandoverModalHtml() {
   const cashVouchersToday = myVouchers.filter((v) => v.partyKind !== "supplier" && v.method !== "check").reduce((a, v) => a + (v.cashAmount ?? v.amount), 0);
   const myHandoversToday = (loadKey("cashHandovers", []) || []).filter((h) => h.repId === rep.id && h.status !== "rejected");
   const handedOverToday = myHandoversToday.reduce((a, h) => a + h.amount, 0);
-  const cashToday = Math.max(0, cashSalesToday + cashVouchersToday - repCashPaidOut(rep.id) - handedOverToday);
+  // نفس حساب الرئيسي بالزبط: كل تسليم مؤكَّد بيصفّر بساعته
+  let cashToday = 0; try { cashToday = repCashLedger(rep).withHim; } catch (e) { cashToday = Math.max(0, cashSalesToday + cashVouchersToday - repCashPaidOut(rep.id) - handedOverToday); }
   return `<div class="modal-title-row"><h3>📤 تسليم الكاش</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <div class="card" style="padding:16px;text-align:center;background:var(--greenLight);margin-bottom:14px;">
       <div class="row-sub">المبلغ اللي معاك دلوقتي</div>
