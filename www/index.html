@@ -6604,12 +6604,8 @@ function showPrint(innerHtml) {
   const nativeBtn = isAndroidPrintBridge()
     ? `<button class="btn btn-gold btn-block" onclick="printViaNativeBridge(this)">🖨 اطبع على الطابعة الحرارية (بلوتوث)</button>
        <button class="btn btn-ghost btn-block" style="font-size:11px;padding:6px;" onclick="forgetSavedPrinter()">🔄 تغيير الطابعة المحفوظة</button>`
-    : `<button class="btn btn-gold btn-block" onclick="printViaBluetooth(this)">🔵 اطبع مباشرة عبر البلوتوث</button>
-       <details style="font-size:11.5px;color:var(--inkSoft);text-align:center;"><summary style="cursor:pointer;padding:4px;">⚙️ ما طبعت؟ خيارات الطابعة</summary>
-         <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px;">
-           <div style="display:flex;gap:8px;"><button class="btn btn-ghost flex1" style="font-size:11px;padding:6px;" onclick="printViaBluetooth(this, true)">🔄 اختار طابعة ثانية</button><button class="btn btn-ghost flex1" style="font-size:11px;padding:6px;" onclick="btToggleMode()">⚙️ جرّب الوضع الثاني</button></div>
-           <button class="btn btn-ghost btn-block" style="font-size:11px;padding:6px;" onclick="btTestChannels(this)">🧪 جرّب كل الطرق</button>
-         </div></details>`;
+    : `<button class="btn btn-gold btn-block" onclick="printViaBluetooth(this)">🖨 اطبع على الطابعة (بلوتوث)</button>
+       <button class="btn btn-ghost btn-block" style="font-size:11px;padding:6px;" onclick="printViaBluetooth(this, true)">🔄 تغيير الطابعة</button>`;
   el.innerHTML = `<div class="print-sheet">
     <div class="no-print" style="margin-bottom:12px;display:flex;flex-direction:column;gap:8px;">
       ${nativeBtn}
@@ -6640,7 +6636,7 @@ async function findWritableCharacteristic(server) {
     for (const ch of chars) if (ch.properties.write || ch.properties.writeWithoutResponse) all.push(ch);
   }
   // القناة المعروفة للطباعة أولاً، وبعدها أي قناة بتكتب بدون رد (أسرع)، وبعدها أي قناة
-  const saved = (localStorage.getItem("btCharUuid") || "").toLowerCase();
+  const saved = ""; // ما منعتمد على قناة محفوظة من تجارب قديمة — البرنامج بيختار القناة الصح لحاله
   return (saved && all.find((c) => String(c.uuid).toLowerCase() === saved)) || all.find((c) => PREF.includes(String(c.uuid).toLowerCase())) || all.find((c) => c.properties.writeWithoutResponse) || all[0] || null;
 }
 function btPrintStatus(msg) {
@@ -6864,12 +6860,18 @@ var _btDevice = null, _btChar = null;
 async function btGetCharacteristic(forcePick) {
   if (!forcePick && _btDevice && _btChar && _btDevice.gatt && _btDevice.gatt.connected) return _btChar;
   let device = !forcePick && _btDevice;
+  let remembered = false;
+  if (!device && !forcePick && !window._btSkipRemembered && navigator.bluetooth.getDevices) {
+    try { const savedName = localStorage.getItem("btWebPrinterName") || ""; const ds = await navigator.bluetooth.getDevices(); device = ds.find((d) => savedName && d.name === savedName) || (ds.length === 1 ? ds[0] : null); remembered = !!device; } catch (e) { device = null; }
+  }
   if (!device) {
     btPrintStatus("اختار الطابعة من القائمة…");
     device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: BT_PRINT_CANDIDATE_UUIDS });
   }
   btPrintStatus("جاري الاتصال بـ " + (device.name || "الطابعة") + "…");
-  const server = await device.gatt.connect();
+  let server;
+  try { server = await device.gatt.connect(); }
+  catch (e) { if (remembered) { window._btSkipRemembered = true; throw new Error("الطابعة المحفوظة مش قريبة أو مطفية — شغّلها واكبس اطبع مرة ثانية"); } throw e; }
   const ch = await findWritableCharacteristic(server);
   if (!ch) throw new Error("ما لقيت قناة كتابة على هالطابعة");
   _btDevice = device; _btChar = ch;
@@ -6886,7 +6888,7 @@ async function printViaBluetooth(btn, forcePick) {
     const ch = await btGetCharacteristic(forcePick);
     btPrintStatus("جاري تجهيز الفاتورة…");
     // نفس لغة الطابعة اللي بتشتغل بتطبيق دفتر (TSPL)، ولو اخترت الوضع الثاني: ESC/POS
-    const mode = (localStorage.getItem("btWebMode") || "tspl");
+    const mode = "tspl"; // الطريقة اللي بتشتغل مع طابعاتنا — بدون خيارات تلخبط
     let bytes;
     if (mode === "escpos") {
       const canvas = renderPrintRootToCanvas();
@@ -6898,7 +6900,7 @@ async function printViaBluetooth(btn, forcePick) {
       bytes = canvasToTsplBytes(canvas);
     }
     await btWriteFast(ch, bytes);
-    btPrintStatus("✅ انبعتت للطابعة (" + (_btDevice && _btDevice.name || "?") + " · " + String(ch.uuid).slice(0, 8) + " · " + (mode === "escpos" ? "الوضع الثاني" : "الوضع الأول") + " · " + Math.round(bytes.length / 1024) + "KB). إذا ما طبعت، اكبس «جرّب الوضع الثاني».");
+    btPrintStatus("✅ انبعتت للطابعة (" + (_btDevice && _btDevice.name || "?") + " · " + String(ch.uuid).slice(0, 8) + " · " + (mode === "escpos" ? "الوضع الثاني" : "الوضع الأول") + " · " + Math.round(bytes.length / 1024) + "KB).");
   } catch (e) {
     _btDevice = null; _btChar = null;
     const m = String((e && e.message) || e);
@@ -9285,6 +9287,7 @@ function perfLogHtml() {
 }
 
 /* ===================== INITIAL RENDER ===================== */
+try { if (!localStorage.getItem("btCleaned1")) { ["btWebMode", "btCharUuid", "btChunk"].forEach((k) => localStorage.removeItem(k)); localStorage.setItem("btCleaned1", "1"); } } catch (e) {}
 i18nStart();
 authInit();
 // الضيف بيفتح على الشاشة الرئيسية مباشرة (بدون شاشة دخول ولا اختيار حساب)
