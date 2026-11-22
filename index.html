@@ -1891,8 +1891,20 @@ function authGateActive() {
   if (state.isRepEntry && !REP_MODE) return false;
   if (authUser) return false;
   if (authCachedUid()) return false;
+  if (REP_MODE) return true;
+  // جهاز مربوط بسحابة شركة (قديم) — لازم يسجّل دخول زي قبل
+  try { if (cloudGetLinkId()) return true; } catch (e) {}
+  // «جرّب أول وسجّل بعدين»: التطبيق بيفتح على طول، وشاشة الدخول بس لما يكبس «تسجيل الدخول»
+  return !!state.showAuth;
+}
+// ضيف = بيستعمل التطبيق بدون حساب (البيانات على هالجهاز بس، ما بترتفع للسحابة)
+function isGuest() {
+  if (REP_MODE || state.isRepEntry) return false;
+  if (authUser || authCachedUid()) return false;
+  try { if (cloudGetLinkId()) return false; } catch (e) {}
   return true;
 }
+function openAuthScreen(mode) { state.showAuth = true; state.authMode = mode || "signup"; state.modal = null; render(); try { window.scrollTo(0, 0); } catch (e) {} }
 function authInit() {
   if ((state.isRepEntry && !REP_MODE) || !authAvailable()) { authReady = true; return; }
   try {
@@ -1902,6 +1914,7 @@ function authInit() {
       authUser = u || null;
       authReady = true;
       if (u) {
+        state.showAuth = false;
         try { localStorage.setItem(LS_PREFIX + "authUid", u.uid); localStorage.setItem(LS_PREFIX + "authEmail", u.email || ""); } catch (e) {}
         authAfterSignIn(u);
       } else {
@@ -1949,17 +1962,18 @@ function renderAuthScreen() {
       <button class="btn btn-green btn-block" onclick="location.reload()">إعادة المحاولة</button></div></main>`;
   }
   const busy = authBusy ? "disabled" : "";
-  return head + `<main class="app-main"><div class="card" style="padding:16px;margin-top:16px;">
-    <div class="row-title" style="margin-bottom:4px;">${mode === "signup" ? "👤 حساب جديد" : "👋 أهلًا فيك"}</div>
-    <div class="row-sub" style="margin-bottom:12px;">${mode === "signup" ? "بياناتك بتنحفظ على حسابك، وبتقدر تفتحها من أي جهاز." : "سجّل دخول عشان تنزل بياناتك وتضل محفوظة."}</div>
+  const canBack = isGuest();
+  return head + `<main class="app-main">
+    ${canBack ? `<button class="btn btn-ghost" style="margin-top:12px;" onclick="state.showAuth=false;render();">→ رجوع للتطبيق</button>` : ""}
+    <div class="card" style="padding:16px;margin-top:12px;">
+    <div class="row-title" style="margin-bottom:4px;">${canBack ? "☁️ احفظ بياناتك" : mode === "signup" ? "👤 حساب جديد" : "👋 أهلًا فيك"}</div>
+    <div class="row-sub" style="margin-bottom:12px;">${canBack ? "سجّل بحسابك عشان تنحفظ بياناتك على السحابة: ما بتضيع لو مسحت التطبيق أو غيّرت جوالك، وبتفتحها من أي جهاز. وكل اللي سجّلته لهلأ بيضل زي ما هو." : mode === "signup" ? "بياناتك بتنحفظ على حسابك، وبتقدر تفتحها من أي جهاز." : "سجّل دخول عشان تنزل بياناتك وتضل محفوظة."}</div>
+    ${googleSignInAvailable() ? `${googleBtnHtml(busy)}
+    <div style="display:flex;align-items:center;gap:8px;margin:14px 0 10px;color:var(--inkSoft);font-size:12px;"><span style="flex:1;height:1px;background:var(--line);"></span>أو بالإيميل<span style="flex:1;height:1px;background:var(--line);"></span></div>` : ""}
     <label class="field"><span class="lbl">الإيميل</span><input id="auth-email" type="email" dir="ltr" autocomplete="email" value="${esc(state.authEmail || authCachedEmail())}" oninput="state.authEmail=this.value;" /></label>
     <label class="field"><span class="lbl">كلمة السر</span>${passInput("auth-pass", mode === "signup" ? "new-password" : "current-password")}</label>
     ${mode === "signup" ? `<label class="field"><span class="lbl">أعد كتابة كلمة السر</span>${passInput("auth-pass2", "new-password")}</label>` : ""}
     <button class="btn btn-green btn-block" ${busy} onclick="authSubmit()">${authBusy ? "⏳ لحظة..." : (mode === "signup" ? "إنشاء الحساب" : "دخول")}</button>
-    ${googleSignInAvailable() ? `<div style="display:flex;align-items:center;gap:8px;margin:14px 0 10px;color:var(--inkSoft);font-size:12px;"><span style="flex:1;height:1px;background:var(--line);"></span>أو<span style="flex:1;height:1px;background:var(--line);"></span></div>
-    <button class="btn btn-ghost btn-block" ${busy} style="display:flex;align-items:center;justify-content:center;gap:10px;background:#fff;border:1.5px solid #dadce0;color:#3c4043;font-weight:700;padding:12px;" onclick="authGoogle()">
-      <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
-      الدخول بحساب جوجل</button>` : ""}
     <div style="display:flex;justify-content:space-between;gap:8px;margin-top:14px;flex-wrap:wrap;">
       <button class="btn btn-ghost" onclick="state.authMode='${mode === "signup" ? "login" : "signup"}'; render();">${mode === "signup" ? "عندي حساب — دخول" : "ما عندي حساب — إنشاء حساب"}</button>
       ${mode === "login" ? `<button class="btn btn-ghost" onclick="authForgot()">نسيت كلمة السر؟</button>` : ""}
@@ -1984,6 +1998,11 @@ async function authSubmit() {
     else await auth.signInWithEmailAndPassword(email, pass);
   } catch (e) { console.error(e); flash(authErrorAr(e)); }
   authBusy = false; render();
+}
+function googleBtnHtml(busy) {
+  return `<button class="btn btn-ghost btn-block" ${busy || ""} style="display:flex;align-items:center;justify-content:center;gap:10px;background:#fff;border:1.5px solid #dadce0;color:#3c4043;font-weight:700;padding:12px;" onclick="authGoogle()">
+      <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+      الدخول بحساب جوجل</button>`;
 }
 // ===== الدخول بحساب جوجل =====
 // على الرابط (المتصفح): نافذة جوجل العادية. على تطبيق جوجل بلاي: إضافة أصلية (FirebaseAuthentication)
@@ -2094,6 +2113,16 @@ async function authAfterSignIn(u) {
       if (localLink === linkId) return;
       const hasLocal = ["sales", "purchases", "vouchers", "customers"].some((k) => (DB[k] || []).length > 0);
       if (localLink && hasLocal && !confirm("هالجهاز فيه بيانات شركة ثانية. بدك تبدّلها ببيانات حسابك؟")) return;
+      if (!localLink && hasLocal) {
+        // كان بيجرّب كضيف، وطلع إله حساب قديم: بنحفظ نسخة من تجربته على الجهاز وبنسأله
+        try { const bak = { app: "daftar", version: 1, exportedAt: new Date().toISOString() }; BACKUP_KEYS.forEach((k) => { bak[k] = DB[k]; }); localStorage.setItem("daftarGuestBak", JSON.stringify(bak)); } catch (e) {}
+        if (!confirm("إلك حساب قديم بدفتر فيه بياناتك 👍\n\nرح نفتحه هلأ، والبيانات اللي جرّبتها على هالجهاز رح تتبدّل ببيانات حسابك.\n\nموافق؟")) {
+          try { await window.firebase.auth().signOut(); } catch (e) {}
+          authUser = null; try { localStorage.removeItem(LS_PREFIX + "authUid"); localStorage.removeItem(LS_PREFIX + "authEmail"); } catch (e) {}
+          flash("تمام — رجعنا للتجربة وبياناتك على الجهاز زي ما هي");
+          return;
+        }
+      }
       await cloudPullCompany(linkId);
       return;
     }
@@ -2797,7 +2826,7 @@ function render() {
     } else {
       app.innerHTML = renderHeader() + `<main class="app-main">${renderScreen()}</main>` + renderFloatingBar() + renderModal();
       lastMainSig = sig;
-      try { const o = onbGet(); if (o && o.newUser && !o.welcome && state.screen === "home" && !state.modal) app.insertAdjacentHTML("beforeend", onbWelcomeHtml()); } catch (e) {}
+      try { const o = onbGet(); if (o && o.newUser && !o.welcome && state.screen === "home" && !state.modal) app.insertAdjacentHTML("beforeend", onbWelcomeHtml()); else if (state.screen === "home" && !state.modal) { const g = guestNudgeHtml(); if (g) app.insertAdjacentHTML("beforeend", g); } } catch (e) {}
     }
   }
   afterRenderHooks();
@@ -3379,14 +3408,14 @@ function renderHeader() {
         ${isHome ? `<button class="subtle-link" onclick="${isCloudOwner ? "ownerCloudLogout()" : "switchAccount()"}">${isCloudOwner ? "خروج ↩" : "تبديل الحساب ↕"}</button>` : ``}
       </div>
     </div>
-    <div style="display:flex;align-items:center;gap:4px;">${syncBadgeHtml()}<button class="icon-btn" onclick="openSettingsModal()" title="الإعدادات">⚙️</button></div>
+    <div style="display:flex;align-items:center;gap:4px;">${isGuest() ? `<button class="btn btn-gold" style="padding:5px 10px;font-size:12px;white-space:nowrap;" onclick="openAuthScreen('signup')">☁️ تسجيل الدخول</button>` : ""}${syncBadgeHtml()}<button class="icon-btn" onclick="openSettingsModal()" title="الإعدادات">⚙️</button></div>
   </div></header>`;
 }
 
 /* ===================== SCREEN DISPATCH ===================== */
 function renderScreen() {
   try { onbEnsure(); } catch (e) {}
-  if (state.screen === "home") return onbStepsHtml() + renderHome();
+  if (state.screen === "home") return guestBannerHtml() + rateCardHtml() + onbStepsHtml() + renderHome();
   return onbTipHtml(state.screen === "suppliers" ? "suppliers" : state.screen) + renderScreenInner();
 }
 function renderScreenInner() {
@@ -3445,6 +3474,11 @@ function renderAccountsScreen() {
       </div>`).join("") + `</div>`;
   }
   html += authAccountCardHtml();
+  if (isGuest()) html += `<div class="card" style="padding:14px;margin-top:16px;border:1.5px solid var(--gold);background:var(--goldLight);">
+    <div class="row-title" style="margin-bottom:4px;">☁️ إنت مش مسجّل دخول</div>
+    <div class="row-sub" style="margin-bottom:10px;">بياناتك على هالجهاز بس. سجّل عشان تنحفظ على السحابة، أو ادخل على حسابك إذا عندك حساب.</div>
+    ${googleSignInAvailable() ? googleBtnHtml("") : ""}
+    <button class="btn btn-ghost btn-block" style="margin-top:8px;" onclick="openAuthScreen('login')">الدخول بالإيميل</button></div>`;
   html += photosStorageCardHtml();
   html += `<div class="card" style="padding:14px;margin-top:16px;"><div class="row-title" data-notr>🌐 اللغة · Language</div>${langToggleHtml(false)}</div>`;
   html += `<div class="card" style="padding:14px;margin-top:20px;">
@@ -6669,16 +6703,33 @@ function canvasToTsplBytes(canvas) {
   const feedMm = parseInt(localStorage.getItem("btFeedMm")) || 25;
   const heightMm = Math.max(10, Math.ceil(h / 8) + feedMm);
   const header = `SIZE ${mm(w)} mm,${heightMm} mm\r\nGAP 0 mm,0 mm\r\nDIRECTION 0\r\nREFERENCE 0,0\r\nCLS\r\n`;
-  const bitmapCmd = `BITMAP 0,0,${bytesPerRow},${h},0,`;
-  const footer = `\r\nPRINT 1,1\r\n`;
+  const footer = `PRINT 1,1\r\n`;
   const enc = (s) => { const a = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i) & 0xff; return a; };
-  const hB = enc(header), cB = enc(bitmapCmd), fB = enc(footer);
-  const total = new Uint8Array(hB.length + cB.length + bitmap.length + fB.length);
-  let off = 0;
-  total.set(hB, off); off += hB.length;
-  total.set(cB, off); off += cB.length;
-  total.set(bitmap, off); off += bitmap.length;
-  total.set(fB, off);
+  // أسرع: ما منبعت الأسطر البيضاء (الفراغات بين الأسطر والهوامش) — الطابعة بتتركها فاضية لحالها
+  // بنقسم الصورة لقطع فيها حبر بس، وكل قطعة بنقصّ أطرافها البيضاء
+  const rowBlank = (yy) => { const o = yy * bytesPerRow; for (let bx = 0; bx < bytesPerRow; bx++) if (bitmap[o + bx] !== 0xff) return false; return true; };
+  const runs = []; let y = 0;
+  while (y < h) {
+    while (y < h && rowBlank(y)) y++;
+    if (y >= h) break;
+    let y2 = y, gap = 0;
+    while (y2 < h && gap < 6) { if (rowBlank(y2)) gap++; else gap = 0; y2++; }
+    runs.push([y, y2 - gap]); y = y2;
+  }
+  const parts = [enc(header)];
+  for (const [y0, y1] of runs) {
+    const rh = y1 - y0;
+    let minB = bytesPerRow, maxB = -1;
+    for (let yy = y0; yy < y1; yy++) { const o = yy * bytesPerRow; for (let bx = 0; bx < bytesPerRow; bx++) if (bitmap[o + bx] !== 0xff) { if (bx < minB) minB = bx; if (bx > maxB) maxB = bx; } }
+    if (maxB < 0) continue;
+    const bw = maxB - minB + 1;
+    const data = new Uint8Array(bw * rh);
+    for (let yy = 0; yy < rh; yy++) data.set(bitmap.subarray((y0 + yy) * bytesPerRow + minB, (y0 + yy) * bytesPerRow + minB + bw), yy * bw);
+    parts.push(enc(`BITMAP ${minB * 8},${y0},${bw},${rh},0,`), data, enc("\r\n"));
+  }
+  parts.push(enc(footer));
+  const total = new Uint8Array(parts.reduce((a, x) => a + x.length, 0));
+  let off = 0; parts.forEach((x) => { total.set(x, off); off += x.length; });
   return total;
 }
 function bytesToBase64(bytes) {
@@ -6909,7 +6960,8 @@ function btToggleMode() {
 // — بدون هيك الطابعات الرخيصة بيمتلي عندها المخزن وبتضيع البيانات بصمت وما بتطبع
 async function btWriteFast(ch, bytes) {
   const canResp = !!ch.properties.write;
-  let size = canResp ? (parseInt(localStorage.getItem("btChunk")) || 120) : 20;
+  // قطع أكبر = طباعة أسرع. إذا الطابعة ما تحملت، بنصغّر بالتدريج ومنحفظ أحسن حجم زبط
+  let size = canResp ? (parseInt(localStorage.getItem("btChunk2")) || 240) : 20;
   let i = 0, n = 0;
   const total = bytes.length;
   while (i < total) {
@@ -6918,7 +6970,7 @@ async function btWriteFast(ch, bytes) {
       if (canResp) await ch.writeValueWithResponse(chunk);
       else { await ch.writeValueWithoutResponse(chunk); await new Promise((r) => setTimeout(r, 25)); }
     } catch (e) {
-      if (size > 20) { size = 20; try { localStorage.setItem("btChunk", "20"); } catch (x) {} continue; }
+      if (size > 20) { size = Math.max(20, Math.floor(size / 2)); try { localStorage.setItem("btChunk2", String(size)); } catch (x) {} continue; }
       throw e;
     }
     i += chunk.length; n++;
@@ -7241,6 +7293,7 @@ function renderModal() {
   else if (m.type === "newItem") inner = newItemModalHtml(m.name, m.barcode, m);
   else if (m.type === "repReceive") inner = repReceiveModalHtml(m);
   else if (m.type === "returnCart") inner = returnCartHtml();
+  else if (m.type === "quickDebt") inner = quickDebtHtml();
   else if (m.type === "importText") inner = importTextModalHtml();
   else if (m.type === "collectCheck") inner = collectModalHtml(m.id);
   else if (m.type === "saleCart") inner = onbTipHtml("saleCart") + renderSaleCartSheet();
@@ -8108,7 +8161,16 @@ function repApplyView(v) {
   Object.values(v.data || {}).forEach((arr) => (Array.isArray(arr) ? arr : []).forEach((x) => x && x.id && inView.add(x.id)));
   (v.handovers || []).forEach((h) => h && h.id && inView.add(h.id));
   const nowT = Date.now();
-  const pending = repOutbox().filter((o) => !merged.has(o.id) && !(o.sent && o.t === "add" && o.rec && inView.has(o.rec.id)) && !(o.sent && nowT - (o.sentAt || o.at || nowT) > 24 * 3600e3));
+  const pending = repOutbox().filter((o) => {
+    if (o.sent && nowT - (o.sentAt || o.at || nowT) > 24 * 3600e3) return false;
+    if (o.t === "add" && o.rec && inView.has(o.rec.id)) return !o.sent ? true : false;
+    if (merged.has(o.id)) {
+      // انستلمت بس لسا ما وصلت بالشاشة؟ منضل نعرضها شوي بدل ما تختفي
+      if (o.t === "add" && o.rec && o.key !== "cashHandovers") { o._mergedAt = o._mergedAt || nowT; return nowT - o._mergedAt < 15 * 60e3; }
+      return false;
+    }
+    return true;
+  });
   repApplying = true;
   try {
     saveKey("accounts", [{ id: acc, name: v.accountName || "", owner: "" }]);
@@ -8159,7 +8221,7 @@ async function repModeStart(u) {
   if (!state.repStatus || state.repStatus === "verify") state.repStatus = "waiting";
   if (repUnsub) repUnsub();
   const viewRef = db.collection("daftar_accounts").doc(m2.linkId).collection("repViews").doc(m2.email);
-  const parts = {}; let head = null; let partsReady = false; let partsUnsub = null; let applyT = null;
+  const parts = {}; const partSig = {}; let head = null; let partsReady = false; let partsUnsub = null; let applyT = null; let staleSince = 0;
   // بنجمّع الشاشة: الرأس + الدفاتر الصغيرة اللي بيذكرها
   const tryApply = () => {
     clearTimeout(applyT);
@@ -8169,6 +8231,10 @@ async function repModeStart(u) {
       if (!partsReady) return;
       const names = Object.keys(head.parts);
       if (names.some((p) => !parts[p])) return; // لسا في دفتر ما وصل
+      // الرأس ممكن يوصل قبل الدفاتر الجديدة — بنستنى لحد ما كل دفتر يطابق الرأس (وإلا الفاتورة الجديدة بتختفي لحظة)
+      const stale = names.some((p) => partSig[p] && partSig[p] !== head.parts[p]);
+      if (stale) { if (!staleSince) staleSince = Date.now(); if (Date.now() - staleSince < 20000) { applyT = setTimeout(tryApply, 1500); return; } }
+      staleSince = 0;
       const data = {};
       names.forEach((p) => { const d = parts[p] || {}; Object.keys(d).forEach((k) => { (data[k] = data[k] || []).push(...(d[k] || [])); }); });
       state.repStatus = "ok";
@@ -8178,7 +8244,7 @@ async function repModeStart(u) {
   const startParts = () => {
     if (partsUnsub) return;
     partsUnsub = viewRef.collection("parts").onSnapshot((snap) => {
-      snap.docChanges().forEach((c) => { if (c.type === "removed") delete parts[c.doc.id]; else parts[c.doc.id] = (c.doc.data() || {}).d || {}; });
+      snap.docChanges().forEach((c) => { if (c.type === "removed") { delete parts[c.doc.id]; delete partSig[c.doc.id]; } else { const dd = c.doc.data() || {}; parts[c.doc.id] = dd.d || {}; partSig[c.doc.id] = dd.s || null; } });
       partsReady = true; tryApply();
     }, (e) => { console.error("rep parts listen failed", e); });
   };
@@ -8393,7 +8459,7 @@ async function publishRepViews() {
         if (known.head === hh && known.idx === idxKey && !changed.length && !removed.length) continue;
         const batch = db.batch();
         if (known.idx !== idxKey) batch.set(db.collection("daftar_repIndex").doc(rep.email), { ...idxData, at: Date.now() });
-        changed.forEach((p) => batch.set(viewRef.collection("parts").doc(p), { d: parts[p], _u: Date.now() }));
+        changed.forEach((p) => batch.set(viewRef.collection("parts").doc(p), { d: parts[p], s: sigs[p], _u: Date.now() }));
         removed.forEach((p) => batch.delete(viewRef.collection("parts").doc(p)));
         batch.set(viewRef, { ...head, _updatedAt: Date.now() });
         try { await batch.commit(); }
@@ -8487,7 +8553,7 @@ async function repMergeInbox(docs) {
   // نحفظ أرقام الحركات اللي انستلمت على سجل المندوب نفسه، عشان تتزامن بين كل أجهزة الإدارة
   try {
     const rs = loadKey("reps", []) || []; let ch = false;
-    rs.forEach((r) => { const m = merged[r.email]; if (!m || !m.length) return; const u = Array.from(new Set([...(r.mergedOps || []), ...m])).slice(-400); if (u.length !== (r.mergedOps || []).length) { r.mergedOps = u; ch = true; } });
+    rs.forEach((r) => { const m = merged[r.email]; if (!m || !m.length) return; const u = Array.from(new Set([...(r.mergedOps || []), ...m])).slice(-400); if (u.join(",") !== (r.mergedOps || []).join(",")) { r.mergedOps = u; ch = true; } });
     if (ch) saveKey("reps", rs);
   } catch (e) {}
   repMerging = false;
@@ -8854,6 +8920,92 @@ if (REP_MODE) {
 }
 
 
+/* ===================== «جرّب أول وسجّل بعدين» =====================
+   الضيف بيستعمل التطبيق والبيانات على الجهاز بس. بنذكّره بلطف يحفظها: شريط بالرئيسية + نافذة بعد أول حركة وبعد كم حركة. */
+function guestActivity() { try { return scoped("sales").length + scoped("purchases").length + scoped("vouchers").length; } catch (e) { return 0; } }
+function guestHasData() { try { return guestActivity() + scoped("customers").length + scoped("products").length > 0; } catch (e) { return false; } }
+function guestBannerHtml() {
+  if (!isGuest() || !guestHasData()) return "";
+  return `<div class="card" style="padding:12px 14px;margin-bottom:14px;border:1.5px solid var(--gold);background:var(--goldLight);">
+    <div class="row-title" style="font-size:14px;margin-bottom:4px;">⚠️ بياناتك على هالجهاز بس</div>
+    <div class="row-sub" style="margin-bottom:10px;">إذا مسحت التطبيق أو ضاع الجوال بتضيع. احفظها على السحابة بكبسة.</div>
+    ${googleSignInAvailable() ? googleBtnHtml("") : `<button class="btn btn-green btn-block" onclick="openAuthScreen('signup')">☁️ احفظ بياناتك</button>`}
+    ${googleSignInAvailable() ? `<button class="btn btn-ghost btn-block" style="margin-top:6px;font-size:12.5px;padding:7px;" onclick="openAuthScreen('signup')">أو بالإيميل</button>` : ""}
+  </div>`;
+}
+// نافذة التذكير: بعد أول حركة، وبعد 5، و15، و40
+const GUEST_NUDGE_AT = [1, 5, 15, 40];
+function guestNudgeHtml() {
+  if (!isGuest() || state._guestNudgeClosed) return "";
+  const n = guestActivity(); let last = 0;
+  try { last = parseInt(localStorage.getItem(LS_PREFIX + "guestNudge") || "0", 10) || 0; } catch (e) {}
+  const due = GUEST_NUDGE_AT.filter((x) => x <= n && x > last).pop();
+  if (!due) return "";
+  const first = due === 1;
+  return `<div style="position:fixed;inset:0;z-index:9000;background:rgba(20,30,20,.55);display:flex;align-items:center;justify-content:center;padding:16px;">
+    <div style="background:var(--paper, #fff);border-radius:18px;max-width:380px;width:100%;padding:24px 20px 18px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.25);">
+      <div style="font-size:52px;line-height:1;margin-bottom:10px;">${first ? "🎉" : "☁️"}</div>
+      <div style="font-size:19px;font-weight:800;margin-bottom:8px;">${first ? "أول حركة انسجلت!" : `صار عندك ${n} حركة`}</div>
+      <div style="font-size:14px;line-height:1.9;color:var(--inkSoft);margin-bottom:16px;">بياناتك هلأ على هالجهاز بس. احفظها على السحابة بكبسة وحدة، عشان ما تضيع لو مسحت التطبيق أو غيّرت جوالك.</div>
+      ${googleSignInAvailable() ? googleBtnHtml("").replace('onclick="authGoogle()"', `onclick="guestNudgeDone(${due});authGoogle()"`) : ""}
+      <button class="btn ${googleSignInAvailable() ? "btn-ghost" : "btn-green"} btn-block" style="margin-top:8px;" onclick="guestNudgeDone(${due});openAuthScreen('signup')">${googleSignInAvailable() ? "بالإيميل" : "☁️ احفظ بياناتك"}</button>
+      <button class="btn btn-ghost btn-block" style="margin-top:4px;color:var(--inkSoft);" onclick="guestNudgeDone(${due});render();">بعدين</button>
+    </div></div>`;
+}
+function guestNudgeDone(n) { try { localStorage.setItem(LS_PREFIX + "guestNudge", String(n)); } catch (e) {} state._guestNudgeClosed = true; setTimeout(() => { state._guestNudgeClosed = false; }, 1000); }
+
+/* ===================== دين سريع: اسم + مبلغ وخلصت ===================== */
+function openQuickDebt() { state.qd = { name: "", amount: "", note: "" }; state.modal = { type: "quickDebt" }; render(); setTimeout(() => { const el = document.getElementById("qd-name"); if (el) el.focus(); }, 60); }
+function quickDebtHtml() {
+  const qd = state.qd || {}; const settings = currentSettings();
+  const names = scoped("customers").map((c) => c.name);
+  return `<div class="modal-title-row"><h3>📝 دين على زبون</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="row-sub" style="margin-bottom:12px;">اكتب اسم الزبون والمبلغ اللي عليه — وخلصت. بينسجل على حسابه وبتشوفه بكشف حسابه.</div>
+    <label class="field"><span class="lbl">اسم الزبون</span><input id="qd-name" list="qd-names" value="${esc(qd.name || "")}" oninput="state.qd.name=this.value;" placeholder="مثلاً: أبو محمد" autocomplete="off" />
+      <datalist id="qd-names">${names.map((n) => `<option value="${esc(n)}"></option>`).join("")}</datalist></label>
+    <label class="field"><span class="lbl">المبلغ (${esc(settings.currency)})</span><input id="qd-amount" type="text" inputmode="decimal" class="mono" value="${esc(qd.amount || "")}" oninput="state.qd.amount=this.value;" placeholder="0" /></label>
+    <label class="field"><span class="lbl">ملاحظة (اختياري)</span><input id="qd-note" value="${esc(qd.note || "")}" oninput="state.qd.note=this.value;" placeholder="مثلاً: بضاعة يوم الخميس" /></label>
+    <button class="btn btn-green btn-block" style="padding:13px;" onclick="saveQuickDebt()">✅ سجّل الدين</button>`;
+}
+function saveQuickDebt() {
+  const qd = state.qd || {};
+  const name = String(qd.name || "").trim();
+  const amount = parseFloat(String(qd.amount || "").replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d))) || 0;
+  if (!name) { flash("⚠️ اكتب اسم الزبون"); return; }
+  if (amount <= 0) { flash("⚠️ اكتب المبلغ"); return; }
+  let cust = scoped("customers").find((c) => c.name.trim().toLowerCase() === name.toLowerCase());
+  if (!cust) { cust = { id: uid(), accountId: state.activeAccountId, name, opening: 0, notes: "", phone: "" }; addScoped("customers", cust); }
+  const sale = { id: uid(), ts: new Date().toISOString(), customerId: cust.id, items: [], quick: true, invoiceNo: String(qd.note || "").trim(), photo: null, total: amount, subtotal: amount, tax: 0, discount: 0, paidNow: 0, payType: "credit", checkPayment: false };
+  if (!addScoped("sales", sale)) { flash("❌ ما انحفظ — مساحة التخزين ممتلئة"); return; }
+  state.qd = null; state.modal = null; state.screen = "home";
+  scheduleDocNumbers();
+  flash(`✅ انسجل ${fmt(amount)} على ${cust.name}`);
+  render();
+}
+
+/* ===================== طلب التقييم: بعد 10 فواتير، مرة وحدة ===================== */
+const DAFTAR_PLAY = "https://play.google.com/store/apps/details?id=com.natsheh.daftar";
+const DAFTAR_FEEDBACK = "mailto:monamoor114@gmail.com?subject=" + encodeURIComponent("ملاحظات على تطبيق دفتر");
+function rateCardHtml() {
+  if (REP_MODE || state.isRepEntry) return "";
+  let r = null; try { r = JSON.parse(localStorage.getItem("daftar_rate") || "null"); } catch (e) {}
+  if (r && (r.done || (r.until && Date.now() < r.until))) return "";
+  let n = 0; try { n = scoped("sales").length; } catch (e) {}
+  if (n < 10) return "";
+  if (state._rateStep === "no") return `<div class="card" style="padding:12px 14px;margin-bottom:14px;border:1.5px solid var(--line);">
+      <div class="row-title" style="font-size:14px;margin-bottom:4px;">🙏 شو اللي مش عاجبك؟</div>
+      <div class="row-sub" style="margin-bottom:10px;">احكيلنا وبنصلّحه — رأيك بيهمنا.</div>
+      <div class="row-flex" style="gap:8px;"><button class="btn btn-green flex1" onclick="rateSet({done:true});openExternal(DAFTAR_FEEDBACK);">✉️ ابعتلنا ملاحظتك</button><button class="btn btn-ghost" onclick="rateSet({done:true});">✕</button></div></div>`;
+  return `<div class="card" style="padding:12px 14px;margin-bottom:14px;border:1.5px solid var(--green);">
+    <div class="row-title" style="font-size:14px;margin-bottom:8px;">⭐ عاجبك دفتر؟</div>
+    <div class="row-flex" style="gap:8px;">
+      <button class="btn btn-green flex1" onclick="state._rateStep='yes';rateSet({done:true});openExternal(DAFTAR_PLAY);">😊 آه — بقيّمه</button>
+      <button class="btn btn-ghost flex1" onclick="state._rateStep='no';render();">😐 مش كثير</button>
+      <button class="btn btn-ghost" style="color:var(--inkSoft);" title="بعدين" onclick="rateSet({until:Date.now()+7*864e5});">بعدين</button>
+    </div></div>`;
+}
+function rateSet(o) { try { localStorage.setItem("daftar_rate", JSON.stringify(o)); } catch (e) {} lastMainSig = null; render(); }
+
 /* ===================== التعريف بالبرنامج للمستخدم الجديد =====================
    1) شاشات ترحيب أول مرة  2) كرت «خطواتك الأولى» بالرئيسية  3) تلميح لمرة وحدة بكل شاشة.
    بتطلع بس للمستخدم الجديد (حساب فاضي) — اللي شغّال أصلاً ما بيشوف إشي. */
@@ -8879,7 +9031,7 @@ const ONB_SLIDES = [
   ["📦", "ضيف أصنافك", "من «المخزون» ضيف كل صنف باسمه وسعره وكميته. وبتقدر تصوّر الباركود بالكاميرا عشان تلاقيه بسرعة."],
   ["🛒", "فاتورة بيع بثواني", "اكتب اسم الصنف أو صوّر الباركود، اختار نقدي أو آجل، وخلصت. المخزون والصندوق وحساب الزبون بيتعدّلوا لحالهم."],
   ["👥", "الديون والشيكات", "كل زبون ومورد إله كشف حساب. والشيكات بتذكّرك فيها قبل موعدها."],
-  ["☁️", "بياناتك بأمان", "كل إشي محفوظ على حسابك، وما بيضيع لو غيّرت جوالك. يلا نبلّش!"],
+  ["☁️", "جرّب براحتك", "استعمله هلأ بدون تسجيل. ولما يعجبك، سجّل بحساب جوجل بكبسة وحدة، وبتنحفظ بياناتك على السحابة وما بتضيع لو غيّرت جوالك."],
 ];
 function onbWelcomeHtml() {
   const i = Math.min(state._onbSlide || 0, ONB_SLIDES.length - 1);
@@ -8891,7 +9043,8 @@ function onbWelcomeHtml() {
       <div style="font-size:20px;font-weight:800;margin-bottom:10px;">${title}</div>
       <div style="font-size:14.5px;line-height:1.9;color:var(--inkSoft);min-height:84px;">${text}</div>
       <div style="display:flex;justify-content:center;gap:6px;margin:14px 0 16px;">${ONB_SLIDES.map((_, k) => `<span style="width:${k === i ? 18 : 7}px;height:7px;border-radius:4px;background:${k === i ? "var(--green)" : "#ccc"};"></span>`).join("")}</div>
-      ${last ? `<button class="btn btn-green btn-block" style="padding:13px;font-size:15px;" onclick="onbFinishWelcome()">يلا نبلّش ✅</button>
+      ${last ? `<button class="btn btn-green btn-block" style="padding:13px;font-size:15px;" onclick="onbFinishWelcome();openQuickDebt();">📝 جرّب: سجّل دين على زبون</button>
+        <button class="btn btn-ghost btn-block" style="margin-top:8px;" onclick="onbFinishWelcome()">يلا نبلّش ✅</button>
         <button class="btn btn-ghost btn-block" style="margin-top:8px;" onclick="openExternal(DAFTAR_YT)">📺 شاهد دروس الفيديو</button>`
       : `<div class="row-flex" style="gap:8px;">
           <button class="btn btn-ghost flex1" onclick="onbFinishWelcome()">تخطّي</button>
@@ -8904,6 +9057,7 @@ function onbFinishWelcome() { const o = onbGet() || {}; o.welcome = true; onbSet
 function onbStepsHtml() {
   const o = onbGet(); if (!o || !o.newUser || !o.steps) return "";
   const steps = [
+    ["📝", "سجّل أول دين على زبون (10 ثواني)", "__debt", scoped("sales").some((x) => x.payType === "credit") || scoped("customers").length > 0],
     ["📦", "ضيف أول صنف", "inventory", scoped("products").length > 0],
     ["🚚", "سجّل فاتورة شراء (البضاعة اللي عندك)", "purchases", scoped("purchases").length > 0],
     ["🛒", "اعمل أول فاتورة بيع", "sales", scoped("sales").length > 0],
@@ -8914,7 +9068,7 @@ function onbStepsHtml() {
   return `<div class="card" style="padding:12px 14px;margin-bottom:14px;border:1.5px solid var(--green);">
     <div class="flex-between" style="margin-bottom:6px;"><strong style="font-size:14.5px;">🚀 خطواتك الأولى <span class="mono" style="color:var(--inkSoft);font-weight:400;">${done}/${steps.length}</span></strong>
       <button class="icon-btn" style="font-size:12px;color:var(--inkSoft);" onclick="onbHideSteps()">إخفاء ✕</button></div>
-    ${steps.map(([ic, label, scr, ok]) => `<div class="list-row" style="cursor:pointer;${ok ? "opacity:.55;" : ""}" onclick="goScreen('${scr}')">
+    ${steps.map(([ic, label, scr, ok]) => `<div class="list-row" style="cursor:pointer;${ok ? "opacity:.55;" : ""}" onclick="${scr === "__debt" ? "openQuickDebt()" : `goScreen('${scr}')`}">
       <span style="font-size:18px;">${ok ? "✅" : ic}</span><div class="flex1" style="font-size:13.5px;${ok ? "text-decoration:line-through;" : "font-weight:600;"}">${label}</div>${ok ? "" : `<span style="color:var(--green);">←</span>`}</div>`).join("")}
     <button class="btn btn-ghost btn-block" style="margin-top:8px;font-size:13px;" onclick="openExternal(DAFTAR_YT)">📺 شاهد دروس الفيديو على يوتيوب</button>
   </div>`;
@@ -9098,6 +9252,8 @@ function perfLogHtml() {
 /* ===================== INITIAL RENDER ===================== */
 i18nStart();
 authInit();
+// الضيف بيفتح على الشاشة الرئيسية مباشرة (بدون شاشة دخول ولا اختيار حساب)
+try { if (isGuest() && !state.activeAccountId && DB.accounts.length === 1) { state.activeAccountId = DB.accounts[0].id; state.screen = "home"; scheduleDocNumbers(); } } catch (e) {}
 render();
 </script>
 </body>
