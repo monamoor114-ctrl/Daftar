@@ -3140,7 +3140,7 @@ function repCollectModalHtml() {
         <div class="card" style="padding:10px;margin-bottom:8px;background:var(--goldLight);border:none;">
           <div class="flex-between" style="margin-bottom:6px;"><strong style="font-size:13px;">🧾 شيك ${i + 1}</strong>${(state._checkRows || []).length > 1 ? `<button class="icon-btn" style="color:var(--stamp);" onclick="removeCheckRow(${i})">🗑</button>` : ""}</div>
           <div class="grid2" style="margin-bottom:6px;">
-            <label class="field" style="margin:0;"><span class="lbl">مبلغ الشيك</span><input type="text" inputmode="decimal" class="mono" value="${esc(row.amount)}" oninput="updateCheckRow(${i},'amount',this.value)" onchange="render()" /></label>
+            <label class="field" style="margin:0;"><span class="lbl">مبلغ الشيك</span><input type="text" inputmode="decimal" class="mono" value="${esc(row.amount)}" oninput="updateCheckRow(${i},'amount',this.value)" /></label>
             <label class="field" style="margin:0;"><span class="lbl">رقم الشيك</span><input class="mono" inputmode="numeric" value="${esc(row.checkNo)}" oninput="updateCheckRow(${i},'checkNo',this.value)" /></label>
           </div>
           <div class="grid2" style="margin-bottom:6px;">
@@ -3154,7 +3154,7 @@ function repCollectModalHtml() {
           ${row.photo ? `<img src="${photoSrc(row.photo)}" style="width:100%;border-radius:8px;margin-top:6px;" />` : ``}
         </div>`).join("")}
       <button class="btn btn-ghost btn-block" style="margin-bottom:8px;" onclick="addCheckRow()">➕ شيك ثاني</button>
-      <div class="flex-between" style="margin-bottom:14px;"><strong>مجموع الشيكات</strong><strong class="mono">${fmt(sumCheckRows())} ${esc(settings.currency)}</strong></div>
+      <div class="flex-between" style="margin-bottom:14px;"><strong>مجموع الشيكات</strong><strong class="mono" id="chk-total">${fmt(sumCheckRows())} ${esc(settings.currency)}</strong></div>
     ` : `<label class="field" style="margin-bottom:14px;"><span class="lbl">المبلغ</span><input type="text" inputmode="decimal" class="mono" value="${esc(state._repCollectAmount || "")}" oninput="state._repCollectAmount=this.value;" /></label>`}
     <button class="btn btn-green btn-block" onclick="repSaveCollect()">تسجيل التحصيل</button>`;
 }
@@ -4070,7 +4070,7 @@ function renderSaleCartSheet() {
         <div class="card" style="padding:10px;margin-bottom:8px;background:var(--card);">
           <div class="flex-between" style="margin-bottom:6px;"><span class="row-sub">شيك ${i + 1}</span><button class="icon-btn" style="color:var(--stamp);" onclick="removeCheckRow(${i})">🗑</button></div>
           <div class="grid2" style="margin-bottom:6px;">
-            <input type="text" inputmode="decimal" class="mono" placeholder="المبلغ" value="${row.amount}" oninput="updateCheckRow(${i},'amount',this.value)" onchange="render()" />
+            <input type="text" inputmode="decimal" class="mono" placeholder="المبلغ" value="${row.amount}" oninput="updateCheckRow(${i},'amount',this.value)" />
             <input class="mono" placeholder="رقم الشيك" value="${esc(row.checkNo)}" oninput="updateCheckRow(${i},'checkNo',this.value)" />
           </div>
           <div class="grid2" style="margin-bottom:6px;">
@@ -4084,11 +4084,11 @@ function renderSaleCartSheet() {
           ${row.photo ? `<img src="${photoSrc(row.photo)}" style="width:100%;border-radius:8px;margin-top:6px;" />` : ``}
         </div>`).join("")}
       <button class="btn btn-ghost btn-block" style="margin-bottom:8px;" onclick="addCheckRow()">＋ إضافة شيك تاني</button>
-      <div class="flex-between" style="margin-bottom:10px;padding:8px 10px;background:var(--paperLight);border-radius:8px;"><strong>إجمالي الشيكات</strong><strong class="mono">${fmt(sumCheckRows())} ${esc(settings.currency)}</strong></div>
+      <div class="flex-between" style="margin-bottom:10px;padding:8px 10px;background:var(--paperLight);border-radius:8px;"><strong>إجمالي الشيكات</strong><strong class="mono" id="chk-total">${fmt(sumCheckRows())} ${esc(settings.currency)}</strong></div>
     ` : `<label class="field"><span class="lbl">المبلغ المدفوع الآن</span><input type="text" inputmode="decimal" class="mono" id="sale-paidnow" value="${esc(state.saleForm.paidNow)}" oninput="state.saleForm.paidNow=this.value;render();" /></label>`}
     ${state.saleForm.payType === "credit" && total - paidNum > 0 ? `<div class="flex-between" style="margin-bottom:10px;"><strong>المتبقي على العميل</strong><strong class="mono" style="color:var(--stamp);">${fmt(total - paidNum)} ${esc(settings.currency)}</strong></div>` : ""}
-    ${state.saleForm.payType === "check" && total - sumCheckRows() > 0.001 ? `<div class="flex-between" style="margin-bottom:10px;"><strong>المتبقي على العميل</strong><strong class="mono" style="color:var(--stamp);">${fmt(total - sumCheckRows())} ${esc(settings.currency)}</strong></div>` : ""}
-    <button class="btn btn-block btn-green" style="${canSubmit ? "" : "opacity:.75;"}" onclick="completeSale()">${editing ? "حفظ التعديلات" : "إتمام البيع"}</button>
+    ${state.saleForm.payType === "check" ? `<div class="flex-between" id="chk-remaining-row" style="margin-bottom:10px;${total - sumCheckRows() > 0.001 ? "" : "display:none;"}"><strong>المتبقي على العميل</strong><strong class="mono" id="chk-remaining" style="color:var(--stamp);">${fmt(total - sumCheckRows())} ${esc(settings.currency)}</strong></div>` : ""}
+    <button class="btn btn-block btn-green" id="sale-submit" style="${canSubmit ? "" : "opacity:.75;"}" onclick="completeSale()">${editing ? "حفظ التعديلات" : "إتمام البيع"}</button>
   `;
 }
 function openSaleCartSheet() { state.modal = { type: "saleCart" }; render(); }
@@ -4130,7 +4130,7 @@ function renderQuickSaleSheet() {
         <div class="card" style="padding:10px;margin-bottom:8px;background:var(--card);">
           <div class="flex-between" style="margin-bottom:6px;"><span class="row-sub">شيك ${i + 1}</span><button class="icon-btn" style="color:var(--stamp);" onclick="removeCheckRow(${i})">🗑</button></div>
           <div class="grid2" style="margin-bottom:6px;">
-            <input type="text" inputmode="decimal" class="mono" placeholder="المبلغ" value="${row.amount}" oninput="updateCheckRow(${i},'amount',this.value)" onchange="render()" />
+            <input type="text" inputmode="decimal" class="mono" placeholder="المبلغ" value="${row.amount}" oninput="updateCheckRow(${i},'amount',this.value)" />
             <input class="mono" placeholder="رقم الشيك" value="${esc(row.checkNo)}" oninput="updateCheckRow(${i},'checkNo',this.value)" />
           </div>
           <div class="grid2" style="margin-bottom:6px;">
@@ -4139,11 +4139,11 @@ function renderQuickSaleSheet() {
           </div>
         </div>`).join("")}
       <button class="btn btn-ghost btn-block" style="margin-bottom:8px;" onclick="addCheckRow()">＋ إضافة شيك تاني</button>
-      <div class="flex-between" style="margin-bottom:10px;padding:8px 10px;background:var(--paperLight);border-radius:8px;"><strong>إجمالي الشيكات</strong><strong class="mono">${fmt(sumCheckRows())} ${esc(settings.currency)}</strong></div>
+      <div class="flex-between" style="margin-bottom:10px;padding:8px 10px;background:var(--paperLight);border-radius:8px;"><strong>إجمالي الشيكات</strong><strong class="mono" id="chk-total">${fmt(sumCheckRows())} ${esc(settings.currency)}</strong></div>
     ` : `<label class="field"><span class="lbl">المبلغ المدفوع الآن</span><input type="text" inputmode="decimal" class="mono" id="sale-paidnow" value="${esc(state.saleForm.paidNow)}" oninput="state.saleForm.paidNow=this.value;render();" /></label>`}
     ${state.saleForm.payType === "credit" && total - paidNum > 0 ? `<div class="flex-between" style="margin-bottom:10px;"><strong>المتبقي على العميل</strong><strong class="mono" style="color:var(--stamp);">${fmt(total - paidNum)} ${esc(settings.currency)}</strong></div>` : ""}
-    ${state.saleForm.payType === "check" && total - sumCheckRows() > 0.001 ? `<div class="flex-between" style="margin-bottom:10px;"><strong>المتبقي على العميل</strong><strong class="mono" style="color:var(--stamp);">${fmt(total - sumCheckRows())} ${esc(settings.currency)}</strong></div>` : ""}
-    <button class="btn btn-block btn-green" style="${canSubmit ? "" : "opacity:.75;"}" onclick="completeSale()">${editing ? "حفظ التعديلات" : "إتمام البيع"}</button>
+    ${state.saleForm.payType === "check" ? `<div class="flex-between" id="chk-remaining-row" style="margin-bottom:10px;${total - sumCheckRows() > 0.001 ? "" : "display:none;"}"><strong>المتبقي على العميل</strong><strong class="mono" id="chk-remaining" style="color:var(--stamp);">${fmt(total - sumCheckRows())} ${esc(settings.currency)}</strong></div>` : ""}
+    <button class="btn btn-block btn-green" id="sale-submit" style="${canSubmit ? "" : "opacity:.75;"}" onclick="completeSale()">${editing ? "حفظ التعديلات" : "إتمام البيع"}</button>
   `;
 }
 
@@ -5246,7 +5246,27 @@ function addVoucher(kind, partyId) {
 /* ---- multi-check row builder (customer receipts) ---- */
 function addCheckRow() { state._checkRows = state._checkRows || []; state._checkRows.push({ amount: "", checkNo: "", bank: "", dueDate: "", photo: null }); render(); }
 function removeCheckRow(i) { state._checkRows.splice(i, 1); render(); }
-function updateCheckRow(i, field, val) { state._checkRows[i][field] = val; }
+function updateCheckRow(i, field, val) { state._checkRows[i][field] = val; if (field === "amount") refreshCheckTotals(); }
+// بنحدّث الأرقام اللي بتعتمد على مبلغ الشيك مباشرة — بدون ما نرسم الشاشة كلها (عشان ما يسكّر الكيبورد وتضيع الكبسة)
+function refreshCheckTotals() {
+  try {
+    const settings = currentSettings(); const cur = esc(settings.currency);
+    const sum = sumCheckRows();
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    set("chk-total", fmt(sum) + " " + cur);
+    if (state.modal && state.modal.type === "saleCart") {
+      const quick = !!state.saleForm.quickMode; let total;
+      if (quick) total = parseFloat(state.saleForm.quickTotal) || 0;
+      else { const sub = state.cart.reduce((a, c) => a + c.price * c.qty, 0); total = Math.max(0, sub + sub * ((settings.taxRate || 0) / 100) - (parseFloat(state.saleForm.discount) || 0)); }
+      const rem = total - sum;
+      set("chk-remaining", fmt(rem) + " " + cur);
+      const row = document.getElementById("chk-remaining-row"); if (row) row.style.display = rem > 0.001 ? "" : "none";
+      const ok = (quick ? total > 0 : state.cart.length > 0) && !!state.saleForm.customerId && sum > 0;
+      const btn = document.getElementById("sale-submit"); if (btn) btn.style.opacity = ok ? "" : ".75";
+    }
+    set("v-total", fmt((parseFloat(state._voucherCash) || 0) + (state._showChecksInVoucher ? sum : 0)) + " " + cur);
+  } catch (e) {}
+}
 function sumCheckRows() { return (state._checkRows || []).reduce((a, r) => a + (parseFloat(r.amount) || 0), 0); }
 function readAndCompressImage(file, callback, maxW, quality) {
   maxW = maxW || 900;
@@ -7631,14 +7651,14 @@ function partyDetailHtml(kind, id) {
     <div class="card" style="padding:12px;margin-bottom:14px;">
       <div class="row-title" style="margin-bottom:8px;">${isCustomer ? "تسجيل تحصيل دفعة" : "تسجيل دفعة للمورد"}</div>
       ${isCustomer ? `
-      <div class="grid2" style="margin-bottom:8px;"><input id="v-cash" type="text" inputmode="decimal" class="mono" placeholder="مبلغ نقدي (اختياري)" value="${state._voucherCash || ""}" oninput="state._voucherCash=this.value;" onchange="render()" /><input id="v-desc" placeholder="بيان (اختياري)" /></div>
+      <div class="grid2" style="margin-bottom:8px;"><input id="v-cash" type="text" inputmode="decimal" class="mono" placeholder="مبلغ نقدي (اختياري)" value="${state._voucherCash || ""}" oninput="state._voucherCash=this.value;refreshCheckTotals();" /><input id="v-desc" placeholder="بيان (اختياري)" /></div>
       <label class="btn btn-ghost btn-block" style="margin-bottom:8px;" onclick="state._showChecksInVoucher = !state._showChecksInVoucher; if(state._showChecksInVoucher && (!state._checkRows||!state._checkRows.length)) addCheckRow(); else render();">${state._showChecksInVoucher ? "➖ إخفاء الشيكات" : "➕ إضافة شيك أو أكتر (لو جزء من المبلغ شيك)"}</label>
       ${state._showChecksInVoucher ? `
         ${(state._checkRows || []).map((row, i) => `
           <div class="card" style="padding:10px;margin-bottom:8px;background:var(--card);">
             <div class="flex-between" style="margin-bottom:6px;"><span class="row-sub">شيك ${i + 1}</span><button class="icon-btn" style="color:var(--stamp);" onclick="removeCheckRow(${i})">🗑</button></div>
             <div class="grid2" style="margin-bottom:6px;">
-              <input type="text" inputmode="decimal" class="mono" placeholder="المبلغ" value="${row.amount}" oninput="updateCheckRow(${i},'amount',this.value)" onchange="render()" />
+              <input type="text" inputmode="decimal" class="mono" placeholder="المبلغ" value="${row.amount}" oninput="updateCheckRow(${i},'amount',this.value)" />
               <input class="mono" placeholder="رقم الشيك" value="${esc(row.checkNo)}" oninput="updateCheckRow(${i},'checkNo',this.value)" />
             </div>
             <div class="grid2" style="margin-bottom:6px;">
@@ -7655,7 +7675,7 @@ function partyDetailHtml(kind, id) {
       ` : ``}
       <div class="flex-between" style="margin-bottom:10px;padding:8px 10px;background:var(--paperLight);border-radius:8px;">
         <strong>إجمالي السند${state._showChecksInVoucher ? " (نقدي + شيكات)" : ""}</strong>
-        <strong class="mono">${fmt((parseFloat(state._voucherCash) || 0) + (state._showChecksInVoucher ? sumCheckRows() : 0))} ${esc(settings.currency)}</strong>
+        <strong class="mono" id="v-total">${fmt((parseFloat(state._voucherCash) || 0) + (state._showChecksInVoucher ? sumCheckRows() : 0))} ${esc(settings.currency)}</strong>
       </div>` : `
       <div class="row-flex" style="margin-bottom:8px;">
         <button class="btn ${!state._voucherMethod || state._voucherMethod === "cash" ? "btn-green" : "btn-ghost"} flex1" style="padding:8px 4px;font-size:12.5px;" onclick="state._voucherMethod='cash';render();">نقدي</button>
