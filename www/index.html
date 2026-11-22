@@ -8523,8 +8523,41 @@ async function repPullInboxNow(btn) {
   }
 }
 var repMerging = false;
+// ===== حركات مؤجلة: تعديل وصل قبل الفاتورة نفسها =====
+function repOpTargetMissing(op, rep) {
+  if (!op || !rep) return false;
+  const acc = rep.accountId;
+  if (op.t === "upd" && (op.key === "sales" || op.key === "purchases") && op.rec && op.rec.id) return !(DB[op.key] || []).some((x) => x.id === op.rec.id && x.accountId === acc);
+  if (op.t === "stock") return !(DB.products || []).some((p) => p.id === op.pid && p.accountId === acc);
+  return false;
+}
+function repDeferOp(op) {
+  const q = loadKey("repDeferred", []) || [];
+  if (!q.some((x) => x.op && x.op.id === op.id)) { q.push({ op, at: Date.now() }); saveKey("repDeferred", q); }
+}
+function repRetryDeferred() {
+  const q = loadKey("repDeferred", []) || [];
+  if (!q.length) return;
+  const reps = loadKey("reps", []) || [];
+  const merged = loadKey("repMerged", {}) || {};
+  const keep = []; const touched = new Set();
+  q.forEach((x) => {
+    const op = x.op; const rep = reps.find((r) => r.email === op.repEmail && r.id === op.repId);
+    const tooOld = Date.now() - (x.at || 0) > 3 * 864e5;
+    if (rep && !tooOld && repOpTargetMissing(op, rep)) { keep.push(x); return; }
+    if (rep && !tooOld) { try { if (repApplyOp(op, rep)) touched.add(rep.accountId); } catch (e) { console.error("deferred op failed", e); } }
+    (merged[op.repEmail] = merged[op.repEmail] || []).push(op.id);
+    merged[op.repEmail] = merged[op.repEmail].slice(-300);
+  });
+  if (keep.length === q.length) return;
+  saveKey("repDeferred", keep); saveKey("repMerged", merged);
+  if (touched.size) { touched.forEach((acc) => cloudMarkDirty(acc, Date.now())); if (touched.has(state.activeAccountId)) cloudScheduleSync(); bgFlash("📥 انطبّق تعديل من المندوب"); bgRender(); }
+  scheduleRepPublish(800);
+}
+setInterval(() => { try { if (!REP_MODE && typeof repMerging !== "undefined" && !repMerging) repRetryDeferred(); } catch (e) {} }, 30000);
 async function repMergeInbox(docs) {
   if (repMerging) return;
+  try { repRetryDeferred(); } catch (e) {}
   repMerging = true;
   const db = cloudInit();
   const merged = loadKey("repMerged", {}) || {};
@@ -8545,6 +8578,8 @@ async function repMergeInbox(docs) {
     }
     if (!op) continue;
     if ((merged[op.repEmail] || []).includes(op.id)) continue;
+    // تعديل على فاتورة لسا ما وصلت لهالجهاز (مثلاً جهاز إدارة ثاني استلم الفاتورة): ما منضيّعه — منأجّله لحد ما توصل
+    if (repOpTargetMissing(op, rep)) { repDeferOp(op); continue; }
     try { if (repApplyOp(op, rep)) touched.add(rep.accountId); } catch (e) { console.error("rep op apply failed", e); }
     (merged[op.repEmail] = merged[op.repEmail] || []).push(op.id);
     merged[op.repEmail] = merged[op.repEmail].slice(-300);
